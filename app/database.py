@@ -1,6 +1,6 @@
 from prisma import Prisma
 
-db = Prisma(auto_connect=True)
+db = Prisma()
 
 async def get_db():
     """Dependency for getting Prisma client"""

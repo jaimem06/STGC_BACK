@@ -57,10 +57,7 @@ Middleware que registra automáticamente en la tabla `audit_logs`:
 
 4. Configurar variables de entorno (`.env`):
    ```env
-   DB_USER="neondb_owner"
-   DB_PASSWORD="tu_password"
-   DB_HOST="tu_host_de_neon"
-   DB_NAME="neondb"
+   DATABASE_URL="postgresql://usuario:password@host/neondb?sslmode=require"
    SECRET_KEY="tu_clave_secreta"
    ```
 
