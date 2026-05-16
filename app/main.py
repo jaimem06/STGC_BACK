@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import engine, Base, get_db
 from app.dependencies import log_user_action, require_admin
+from app.routes import auth
 
 app = FastAPI(
     title=settings.app_name,
@@ -21,6 +22,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include Routers
+app.include_router(auth.router, prefix=settings.api_prefix)
 
 
 @app.on_event("startup")

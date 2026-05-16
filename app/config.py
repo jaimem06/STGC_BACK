@@ -17,9 +17,21 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
-    # PostgreSQL Database
-    # Format: postgresql+asyncpg://user:password@host:port/dbname
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/stgc_db"
+    # Database Parameters
+    db_user: str
+    db_password: str
+    db_host: str
+    db_port: int = 5432
+    db_name: str
+    db_ssl_mode: str = "require"
+
+    @property
+    def database_url(self) -> str:
+        """Constructs the async database URL from individual parameters"""
+        return (
+            f"postgresql+asyncpg://{self.db_user}:{self.db_password}@"
+            f"{self.db_host}:{self.db_port}/{self.db_name}?ssl={self.db_ssl_mode}"
+        )
 
     debug: bool = False
 
