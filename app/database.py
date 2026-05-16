@@ -10,10 +10,11 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-# Create async engine
+# Create async engine for PostgreSQL
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
+    pool_pre_ping=True,  # Recommended for PostgreSQL to handle idle connections
 )
 
 # Create async session factory
