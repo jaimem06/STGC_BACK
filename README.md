@@ -1,65 +1,72 @@
 # STGC_BACK: Sistema de Trazabilidad y Gestión de Café
 
-Microservicio base especializado en autenticación, control de acceso basado en roles (RBAC) y auditoría para la Finca Tierra Fértil. Esta solución está construida sobre el framework FastAPI, utilizando PostgreSQL de manera asíncrona y seguridad basada en JSON Web Tokens (JWT) con política de sesión única.
+Microservicio base especializado en autenticación, control de acceso basado en roles (RBAC) y auditoría para la Finca Tierra Fértil. Esta solución está optimizada para entornos Python modernos, utilizando Prisma ORM para garantizar la compatibilidad con las versiones más recientes del lenguaje y PostgreSQL asíncrono.
 
 ## Especificaciones Técnicas
 
 - **Framework:** FastAPI
-- **Base de Datos:** PostgreSQL (vía SQLAlchemy 2.0 y asyncpg)
+- **ORM:** Prisma ORM (Motor de consultas en Rust)
+- **Base de Datos:** PostgreSQL (Neon)
 - **Seguridad:** JWT (python-jose) con hashing BCrypt (passlib)
-- **Configuración:** Pydantic Settings con soporte para archivos .env
-- **Gestión de Sesiones:** Control de token de sesión único por usuario en base de datos
+- **Configuración:** Pydantic Settings con soporte para archivos .env y parámetros descompuestos
+- **Gestión de Sesiones:** Control de token de sesión único por usuario para evitar accesos concurrentes
 
-## Funcionalidades Principales
+## Funcionalidades Implementadas
 
-### Autenticación y Seguridad
-El sistema implementa un flujo de autenticación seguro mediante JWT. Se incluye un mecanismo de validación de `session_token` que garantiza que solo exista una sesión activa por cuenta de usuario; el inicio de una nueva sesión invalida automáticamente las credenciales de sesiones anteriores.
+### Autenticación y Registro
+- **POST /api/auth/register**: Registro de nuevos usuarios con validación de roles.
+- **POST /api/auth/login**: Validación de credenciales y generación de JWT con rotación de `session_token`.
 
 ### Control de Acceso (RBAC)
-Se ha implementado una jerarquía de permisos que abarca toda la cadena productiva del café. Los roles de alta dirección (ADMIN y GERENTE_GENERAL) poseen privilegios globales, permitiendo el acceso a endpoints protegidos por roles operativos de menor jerarquía sin necesidad de declaraciones adicionales.
+Jerarquía de permisos optimizada para la cadena productiva del café:
+- **Nivel Directivo:** ADMIN, GERENTE_GENERAL (Acceso total heredado).
+- **Nivel Operativo:** CAPATAZ, SEMBRADOR, RECOLECTOR, CLASIFICADOR, TECNICO_DESPULPADO, etc.
+- **Nivel Técnico:** TOSTADOR, GESTOR_CALIDAD, CATADOR, BARISTA.
 
-### Sistema de Auditoría
-Integración de un middleware de auditoría que registra de forma automática:
-- Identificador del usuario
-- Acción realizada
-- Endpoint solicitado
-- Dirección IP de origen
-- Marca de tiempo (UTC)
+### Auditoría Institucional
+Middleware que registra automáticamente en la tabla `audit_logs`:
+- Usuario y acción realizada.
+- Endpoint y dirección IP de origen.
+- Sincronización automática con el motor de Prisma.
 
-## Guía de Instalación
+## Guía de Instalación y Despliegue
 
 ### Requisitos Previos
-- Python 3.10 o superior
-- Instancia de PostgreSQL activa
-- Herramienta cliente de Git
+- Python 3.10 o superior (Compatible con Python 3.14 Alpha)
+- Instancia de PostgreSQL (Recomendado: Neon)
+- Git
 
-### Procedimiento de Despliegue Local
+### Procedimiento de Configuración
 
-1. Clonar el repositorio institucional:
+1. Clonar el repositorio:
    ```bash
    git clone https://github.com/jaimem06/STGC_BACK.git
    cd STGC_BACK
    ```
 
-2. Configurar el entorno virtual de ejecución:
+2. Configurar el entorno virtual:
    ```bash
    python -m venv venv
-   source venv/bin/activate  # En sistemas Linux/macOS
-   # venv\Scripts\activate   # En sistemas Windows
+   source venv/bin/activate  # Linux/macOS
    ```
 
-3. Instalación de dependencias del sistema:
+3. Instalar dependencias:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Configuración de variables de entorno:
-   Debe crearse un archivo `.env` en la raíz del proyecto basándose en el siguiente esquema:
+4. Configurar variables de entorno (`.env`):
    ```env
-   DATABASE_URL="postgresql+asyncpg://usuario:password@localhost:5432/stgc_db"
-   SECRET_KEY="su_clave_secreta_institucional"
-   APP_NAME="STGC_BACK API"
-   DEBUG=False
+   DB_USER="neondb_owner"
+   DB_PASSWORD="tu_password"
+   DB_HOST="tu_host_de_neon"
+   DB_NAME="neondb"
+   SECRET_KEY="tu_clave_secreta"
+   ```
+
+5. Generar Cliente Prisma y Sincronizar Base de Datos:
+   ```bash
+   prisma db push
    ```
 
 ## Ejecución del Servicio
@@ -70,22 +77,24 @@ Para iniciar el microservicio en entorno de desarrollo:
 uvicorn app.main:app --reload
 ```
 
-### Acceso a Documentación Técnica
-- Interfaz de Swagger (OpenAPI): `http://localhost:8000/api/docs`
-- Verificación de estado (Health Check): `http://localhost:8000/`
+- **Documentación Interactiva:** `http://localhost:8000/api/docs`
+- **Estado del Sistema:** `http://localhost:8000/`
 
 ## Estructura de Directorios
 
 ```text
-app/
-├── models/          # Definición de esquemas de datos (SQLAlchemy)
-├── security.py      # Primitivas de seguridad y criptografía
-├── dependencies.py  # Inyección de dependencias y lógica RBAC
-├── database.py      # Orquestación de la conexión asíncrona a BD
-├── config.py        # Modelo de configuración del sistema
-└── main.py          # Punto de entrada y configuración de la aplicación
+STGC_BACK/
+├── app/
+│   ├── routes/          # Endpoints de autenticación y lógica
+│   ├── schemas/         # Validaciones Pydantic
+│   ├── security.py      # Seguridad y JWT
+│   ├── dependencies.py  # RBAC y Auditoría
+│   ├── database.py      # Cliente Prisma
+│   └── main.py          # Punto de entrada FastAPI
+├── schema.prisma        # Definición única de modelos de datos
+└── .env                 # Parámetros de configuración local
 ```
 
 ## Propiedad Intelectual
 Copyright (c) 2026 Finca Tierra Fértil. Todos los derechos reservados.
-Información de carácter confidencial y uso restringido.
+Documentación técnica confidencial para uso exclusivo institucional.
