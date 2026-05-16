@@ -1,92 +1,91 @@
-# STGC_BACK - Sistema de Trazabilidad y Gestión de Café
+# STGC_BACK: Sistema de Trazabilidad y Gestión de Café
 
-Microservicio base de autenticación, control de acceso por roles (RBAC) y auditoría para la Finca Tierra Fértil. Diseñado con FastAPI, PostgreSQL asíncrono y seguridad JWT de sesión única.
+Microservicio base especializado en autenticación, control de acceso basado en roles (RBAC) y auditoría para la Finca Tierra Fértil. Esta solución está construida sobre el framework FastAPI, utilizando PostgreSQL de manera asíncrona y seguridad basada en JSON Web Tokens (JWT) con política de sesión única.
 
-## 🚀 Características Principales
+## Especificaciones Técnicas
 
--   **Autenticación JWT:** Implementación segura con tokens de acceso.
--   **Sesión Única:** Control de `session_token` en base de datos para invalidar sesiones previas al iniciar una nueva.
--   **RBAC (Role-Based Access Control):** Jerarquía de roles específica para la industria del café (desde Recolectores hasta Gerencia).
--   **Auditoría Automática:** Registro de acciones de usuario, endpoints visitados e IP de origen.
--   **Stack Moderno:** FastAPI + SQLAlchemy 2.0 + PostgreSQL (asyncpg).
--   **Configuración Segura:** Gestión mediante variables de entorno (`.env`).
+- **Framework:** FastAPI
+- **Base de Datos:** PostgreSQL (vía SQLAlchemy 2.0 y asyncpg)
+- **Seguridad:** JWT (python-jose) con hashing BCrypt (passlib)
+- **Configuración:** Pydantic Settings con soporte para archivos .env
+- **Gestión de Sesiones:** Control de token de sesión único por usuario en base de datos
 
-## 🛠️ Requisitos
+## Funcionalidades Principales
 
--   Python 3.10+
--   PostgreSQL
--   Git
+### Autenticación y Seguridad
+El sistema implementa un flujo de autenticación seguro mediante JWT. Se incluye un mecanismo de validación de `session_token` que garantiza que solo exista una sesión activa por cuenta de usuario; el inicio de una nueva sesión invalida automáticamente las credenciales de sesiones anteriores.
 
-## 📦 Instalación
+### Control de Acceso (RBAC)
+Se ha implementado una jerarquía de permisos que abarca toda la cadena productiva del café. Los roles de alta dirección (ADMIN y GERENTE_GENERAL) poseen privilegios globales, permitiendo el acceso a endpoints protegidos por roles operativos de menor jerarquía sin necesidad de declaraciones adicionales.
 
-1.  **Clonar el repositorio:**
-    ```bash
-    git clone https://github.com/jaimem06/STGC_BACK.git
-    cd STGC_BACK
-    ```
+### Sistema de Auditoría
+Integración de un middleware de auditoría que registra de forma automática:
+- Identificador del usuario
+- Acción realizada
+- Endpoint solicitado
+- Dirección IP de origen
+- Marca de tiempo (UTC)
 
-2.  **Crear y activar entorno virtual:**
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # Linux/macOS
-    # venv\Scripts\activate  # Windows
-    ```
+## Guía de Instalación
 
-3.  **Instalar dependencias:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+### Requisitos Previos
+- Python 3.10 o superior
+- Instancia de PostgreSQL activa
+- Herramienta cliente de Git
 
-4.  **Configurar entorno:**
-    Edita el archivo `.env` con tus credenciales de PostgreSQL:
-    ```env
-    DATABASE_URL="postgresql+asyncpg://usuario:password@localhost:5432/stgc_db"
-    SECRET_KEY="tu_clave_secreta"
-    ```
+### Procedimiento de Despliegue Local
 
-## 🚦 Ejecución
+1. Clonar el repositorio institucional:
+   ```bash
+   git clone https://github.com/jaimem06/STGC_BACK.git
+   cd STGC_BACK
+   ```
 
-Para iniciar el servidor en modo desarrollo:
+2. Configurar el entorno virtual de ejecución:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # En sistemas Linux/macOS
+   # venv\Scripts\activate   # En sistemas Windows
+   ```
+
+3. Instalación de dependencias del sistema:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Configuración de variables de entorno:
+   Debe crearse un archivo `.env` en la raíz del proyecto basándose en el siguiente esquema:
+   ```env
+   DATABASE_URL="postgresql+asyncpg://usuario:password@localhost:5432/stgc_db"
+   SECRET_KEY="su_clave_secreta_institucional"
+   APP_NAME="STGC_BACK API"
+   DEBUG=False
+   ```
+
+## Ejecución del Servicio
+
+Para iniciar el microservicio en entorno de desarrollo:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
--   **API Docs:** [http://localhost:8000/api/docs](http://localhost:8000/api/docs)
--   **Health Check:** [http://localhost:8000/](http://localhost:8000/)
+### Acceso a Documentación Técnica
+- Interfaz de Swagger (OpenAPI): `http://localhost:8000/api/docs`
+- Verificación de estado (Health Check): `http://localhost:8000/`
 
-## 🏗️ Estructura del Proyecto
+## Estructura de Directorios
 
 ```text
 app/
-├── models/          # Modelos de SQLAlchemy (User, AuditLog)
-├── security.py      # Lógica de JWT y Hashing
-├── dependencies.py  # Inyección de dependencias y RBAC
-├── database.py      # Configuración de conexión asíncrona
-├── config.py        # Gestión de variables de entorno
-└── main.py          # Punto de entrada de FastAPI
+├── models/          # Definición de esquemas de datos (SQLAlchemy)
+├── security.py      # Primitivas de seguridad y criptografía
+├── dependencies.py  # Inyección de dependencias y lógica RBAC
+├── database.py      # Orquestación de la conexión asíncrona a BD
+├── config.py        # Modelo de configuración del sistema
+└── main.py          # Punto de entrada y configuración de la aplicación
 ```
 
-## 🔐 Jerarquía de Roles
-
-El sistema implementa una lógica de herencia donde los roles **ADMIN** y **GERENTE_GENERAL** tienen acceso automático a todas las rutas protegidas.
-
-**Roles incluidos:**
--   *Administración:* ADMIN, GERENTE_GENERAL, GERENTE_OPERACIONES.
--   *Campo/Planta:* CAPATAZ, SEMBRADOR, RECOLECTOR, CLASIFICADOR, TECNICO_DESPULPADO.
--   *Procesamiento:* ENCARGADO_SECADO, TOSTADOR, GESTOR_CALIDAD.
--   *Logística:* TECNICO_ALMACENAMIENTO, CONTROLADOR_DESPACHO, GESTOR_INVENTARIO.
--   *Servicio:* PRODUCTOR, CATADOR, BARISTA, PERSONAL_COCINA, CAJERO_MESERO.
-
-## 📝 Auditoría
-
-Para registrar una acción en el log de auditoría, simplemente usa la dependencia `log_user_action` en tu endpoint:
-
-```python
-@app.post("/items", dependencies=[Depends(log_user_action("crear_item"))])
-async def create_item():
-    ...
-```
-
-## 🛡️ Licencia
-Propiedad privada - Finca Tierra Fértil.
+## Propiedad Intelectual
+Copyright (c) 2026 Finca Tierra Fértil. Todos los derechos reservados.
+Información de carácter confidencial y uso restringido.
