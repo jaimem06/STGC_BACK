@@ -1,9 +1,8 @@
-from fastapi import FastAPI, Depends, status
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.database import engine, Base, get_db
+from app.database import db
 from app.dependencies import log_user_action, require_admin
 from app.routes import auth
 
@@ -29,9 +28,14 @@ app.include_router(auth.router, prefix=settings.api_prefix)
 
 @app.on_event("startup")
 async def startup():
-    # Create database tables (use migrations like Alembic in production)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Connect to the database
+    await db.connect()
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    # Disconnect from the database
+    await db.disconnect()
 
 
 @app.get("/", tags=["Health"])

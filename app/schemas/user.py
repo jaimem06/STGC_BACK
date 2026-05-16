@@ -1,17 +1,17 @@
 from typing import Optional
 from pydantic import BaseModel, EmailStr, ConfigDict
-from app.models.user import RoleEnum
+from prisma.enums import Role
 
 class UserBase(BaseModel):
     email: EmailStr
 
 class UserCreate(UserBase):
     password: str
-    role: Optional[RoleEnum] = RoleEnum.CAJERO_MESERO
+    role: Optional[Role] = Role.CAJERO_MESERO
 
 class UserOut(UserBase):
     id: str
-    role: RoleEnum
+    role: Role
     is_active: bool
 
     model_config = ConfigDict(from_attributes=True)

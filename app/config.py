@@ -27,10 +27,10 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        """Constructs the async database URL from individual parameters"""
+        """Constructs the standard database URL for Prisma"""
         return (
-            f"postgresql+asyncpg://{self.db_user}:{self.db_password}@"
-            f"{self.db_host}:{self.db_port}/{self.db_name}?ssl={self.db_ssl_mode}"
+            f"postgresql://{self.db_user}:{self.db_password}@"
+            f"{self.db_host}:{self.db_port}/{self.db_name}?sslmode={self.db_ssl_mode}"
         )
 
     debug: bool = False
