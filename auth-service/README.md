@@ -7,33 +7,30 @@ Microservicio base especializado en autenticación, control de acceso basado en 
 - **Framework:** FastAPI
 - **ORM:** Prisma ORM (Motor de consultas en Rust)
 - **Base de Datos:** PostgreSQL (Neon)
-- **Seguridad:** JWT (python-jose) con hashing BCrypt (passlib)
-- **Configuración:** Pydantic Settings con soporte para archivos .env y parámetros descompuestos
-- **Gestión de Sesiones:** Control de token de sesión único por usuario para evitar accesos concurrentes
+- **Seguridad:** JWT con hashing BCrypt y Rate Limiting (slowapi)
+- **Gestión de Sesiones:** Control de token de sesión único por usuario
 
 ## Funcionalidades Implementadas
 
 ### Autenticación y Registro
-- **POST /api/auth/register**: Registro de nuevos usuarios con validación de roles.
-- **POST /api/auth/login**: Validación de credenciales y generación de JWT con rotación de `session_token`.
+- **POST /api/auth/register**: Registro de usuarios con validación de roles (Rate Limited).
+- **POST /api/auth/login**: Validación y generación de JWT con rotación de `session_token` (Rate Limited).
 
 ### Control de Acceso (RBAC)
 Jerarquía de permisos optimizada para la cadena productiva del café:
 - **Nivel Directivo:** ADMIN, GERENTE_GENERAL (Acceso total heredado).
-- **Nivel Operativo:** CAPATAZ, SEMBRADOR, RECOLECTOR, CLASIFICADOR, TECNICO_DESPULPADO, etc.
+- **Nivel Operativo:** CAPATAZ, SEMBRADOR, RECOLECTOR, CLASIFICADOR, etc.
 - **Nivel Técnico:** TOSTADOR, GESTOR_CALIDAD, CATADOR, BARISTA.
 
-### Auditoría Institucional
-Middleware que registra automáticamente en la tabla `audit_logs`:
-- Usuario y acción realizada.
-- Endpoint y dirección IP de origen.
-- Sincronización automática con el motor de Prisma.
+### Auditoría
+Middleware asíncrono (Background Tasks) que registra en la tabla `audit_logs`:
+- Usuario, acción, endpoint e IP de origen.
 
 ## Guía de Instalación y Despliegue
 
 ### Requisitos Previos
-- Python 3.10 o superior (Compatible con Python 3.14 Alpha)
-- Instancia de PostgreSQL (Recomendado: Neon)
+- Python 3.10+ (Compatible con Python 3.14 Alpha)
+- Instancia de PostgreSQL (Neon)
 - Git
 
 ### Procedimiento de Configuración
@@ -41,13 +38,13 @@ Middleware que registra automáticamente en la tabla `audit_logs`:
 1. Clonar el repositorio:
    ```bash
    git clone https://github.com/jaimem06/STGC_BACK.git
-   cd STGC_BACK
+   cd STGC_BACK/auth-service
    ```
 
 2. Configurar el entorno virtual:
    ```bash
    python -m venv venv
-   source venv/bin/activate  # Linux/macOS
+   source venv/bin/activate
    ```
 
 3. Instalar dependencias:
@@ -61,14 +58,12 @@ Middleware que registra automáticamente en la tabla `audit_logs`:
    SECRET_KEY="tu_clave_secreta"
    ```
 
-5. Generar Cliente Prisma y Sincronizar Base de Datos:
+5. Sincronizar Base de Datos:
    ```bash
    prisma db push
    ```
 
 ## Ejecución del Servicio
-
-Para iniciar el microservicio en entorno de desarrollo:
 
 ```bash
 uvicorn app.main:app --reload
@@ -80,18 +75,16 @@ uvicorn app.main:app --reload
 ## Estructura de Directorios
 
 ```text
-STGC_BACK/
+auth-service/
 ├── app/
-│   ├── routes/          # Endpoints de autenticación y lógica
+│   ├── routes/          # Endpoints de autenticación
 │   ├── schemas/         # Validaciones Pydantic
 │   ├── security.py      # Seguridad y JWT
-│   ├── dependencies.py  # RBAC y Auditoría
+│   ├── dependencies.py  # RBAC y Auditoría asíncrona
 │   ├── database.py      # Cliente Prisma
-│   └── main.py          # Punto de entrada FastAPI
-├── schema.prisma        # Definición única de modelos de datos
-└── .env                 # Parámetros de configuración local
+│   ├── limiter.py       # Configuración Rate Limit
+│   └── main.py          # Punto de entrada
+├── static/              # Assets de ReDoc (Self-hosted)
+├── schema.prisma        # Definición de modelos Prisma
+└── .env                 # Configuración local
 ```
-
-## Propiedad Intelectual
-Copyright (c) 2026 Finca Tierra Fértil. Todos los derechos reservados.
-Documentación técnica confidencial para uso exclusivo institucional.
