@@ -12,7 +12,7 @@ from app.security import (
     generate_session_token,
 )
 from app.config import settings
-from app.main import limiter
+from app.limiter import limiter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
