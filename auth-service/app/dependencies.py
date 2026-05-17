@@ -3,7 +3,6 @@ from fastapi import Depends, HTTPException, Request, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 from prisma import Prisma
 from prisma.models import User
-from prisma.enums import Role
 
 from app.security import decode_access_token
 from app.database import get_db
@@ -42,7 +41,10 @@ async def get_current_user(
     if not user_id or not session_token:
         raise credentials_exception
 
-    user = await db.user.find_unique(where={"id": user_id})
+    user = await db.user.find_unique(
+        where={"id": user_id},
+        include={"role": {"include": {"permissions": True}}}
+    )
 
     if user is None or user.session_token != session_token:
         raise session_invalidated_exception if user else credentials_exception
@@ -59,31 +61,37 @@ async def get_current_active_user(
         )
     return current_user
 
-class RoleChecker:
-    def __init__(self, allowed_roles: list[Role]):
-        self.allowed_roles = allowed_roles
+class PermissionChecker:
+    def __init__(self, required_permissions: list[str]):
+        self.required_permissions = required_permissions
 
     def __call__(
         self,
         current_user: Annotated[User, Depends(get_current_active_user)],
     ) -> User:
-        if current_user.role in [Role.ADMIN, Role.GERENTE_GENERAL]:
+        user_permissions = [p.name for p in current_user.role.permissions]
+
+        # El permiso 'all_access' otorga acceso total independientemente de lo requerido
+        if "all_access" in user_permissions:
             return current_user
 
-        if current_user.role not in self.allowed_roles:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No tienes permisos suficientes",
-            )
+        for perm in self.required_permissions:
+            if perm not in user_permissions:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"No tienes el permiso necesario: {perm}",
+                )
         return current_user
 
-require_admin = RoleChecker([Role.ADMIN])
-require_productor = RoleChecker([Role.PRODUCTOR])
-require_catador = RoleChecker([Role.CATADOR])
-require_barista = RoleChecker([Role.BARISTA])
-require_capataz = RoleChecker([Role.CAPATAZ])
-require_tostador = RoleChecker([Role.TOSTADOR])
-require_gestor_calidad = RoleChecker([Role.GESTOR_CALIDAD])
+# Dependencias de permisos comunes
+require_all_access = PermissionChecker(["all_access"])
+require_manage_users = PermissionChecker(["manage_users"])
+require_productor = PermissionChecker(["productor_actions"])
+require_catador = PermissionChecker(["catador_actions"])
+require_barista = PermissionChecker(["barista_actions"])
+require_capataz = PermissionChecker(["capataz_actions"])
+require_tostador = PermissionChecker(["tostador_actions"])
+require_gestor_calidad = PermissionChecker(["calidad_actions"])
 
 async def _record_audit_log(db: Prisma, user_id: str, action: str, endpoint: str, ip_address: str):
     try:

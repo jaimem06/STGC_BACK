@@ -7,8 +7,8 @@ from slowapi.errors import RateLimitExceeded
 
 from app.config import settings
 from app.database import db
-from app.dependencies import log_user_action, require_admin
-from app.routes import auth
+from app.dependencies import log_user_action, require_all_access
+from app.routes import auth, roles, users
 from app.limiter import limiter
 
 app = FastAPI(
@@ -41,6 +41,8 @@ async def custom_redoc_html():
     )
 
 app.include_router(auth.router, prefix=settings.api_prefix)
+app.include_router(roles.router, prefix=settings.api_prefix)
+app.include_router(users.router, prefix=settings.api_prefix)
 
 @app.on_event("startup")
 async def startup():
@@ -60,7 +62,7 @@ async def health_check():
 
 @app.get(
     f"{settings.api_prefix}/admin-only",
-    dependencies=[Depends(require_admin), Depends(log_user_action("access_admin_area"))],
+    dependencies=[Depends(require_all_access), Depends(log_user_action("access_admin_area"))],
     tags=["Test"]
 )
 async def admin_only_route():
