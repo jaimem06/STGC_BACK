@@ -1,7 +1,4 @@
-from datetime import timedelta
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from prisma import Prisma
 from prisma.enums import Role
@@ -15,6 +12,7 @@ from app.security import (
     generate_session_token,
 )
 from app.config import settings
+from app.main import limiter
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -43,7 +41,9 @@ async def register(
     return new_user
 
 @router.post("/login", response_model=Token)
+@limiter.limit("10/minute")
 async def login(
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[Prisma, Depends(get_db)]
 ):

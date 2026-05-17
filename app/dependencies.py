@@ -105,24 +105,44 @@ require_tostador = RoleChecker([Role.TOSTADOR])
 require_gestor_calidad = RoleChecker([Role.GESTOR_CALIDAD])
 
 
+from fastapi import Depends, HTTPException, Request, status, BackgroundTasks
+...
+async def _record_audit_log(db: Prisma, user_id: str, action: str, endpoint: str, ip_address: str):
+    """Internal helper to write audit log in background"""
+    try:
+        await db.auditlog.create(
+            data={
+                "user_id": user_id,
+                "action": action,
+                "endpoint": endpoint,
+                "ip_address": ip_address,
+            }
+        )
+    except Exception:
+        # Prevent audit log failure from crashing the app
+        pass
+
+
 def log_user_action(action: str) -> Callable:
     """
-    Dependency factory to log user actions in the AuditLog.
+    Dependency factory to log user actions in the AuditLog via BackgroundTasks.
     """
-    async def _log_action(
+    async def _log_action_dependency(
         request: Request,
+        background_tasks: BackgroundTasks,
         current_user: Annotated[User, Depends(get_current_user)],
         db: Annotated[Prisma, Depends(get_db)],
     ):
         ip_address = get_client_ip(request)
-        await db.auditlog.create(
-            data={
-                "user_id": current_user.id,
-                "action": action,
-                "endpoint": str(request.url.path),
-                "ip_address": ip_address,
-            }
+        # We add the task to background so the user gets their response faster
+        background_tasks.add_task(
+            _record_audit_log, 
+            db, 
+            current_user.id, 
+            action, 
+            str(request.url.path), 
+            ip_address
         )
         return None
 
-    return _log_action
+    return _log_action_dependency
