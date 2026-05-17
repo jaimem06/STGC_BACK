@@ -10,7 +10,8 @@ app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
     openapi_url=f"{settings.api_prefix}/openapi.json",
-    docs_url=f"{settings.api_prefix}/docs",
+    docs_url=None,
+    redoc_url=f"{settings.api_prefix}/docs",
 )
 
 # Configure CORS
