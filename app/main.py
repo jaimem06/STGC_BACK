@@ -31,8 +31,6 @@ app.add_middleware(
 # Custom ReDoc route using LOCAL assets
 @app.get("/docs", include_in_schema=False)
 async def custom_redoc_html():
-    import logging
-    logging.info("Accediendo a la documentación ReDoc (Auto-hospedada)")
     return get_redoc_html(
         openapi_url=app.openapi_url,
         title=f"{app.title} - ReDoc",
