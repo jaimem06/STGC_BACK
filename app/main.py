@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 from app.database import db
@@ -12,8 +13,11 @@ app = FastAPI(
     version=settings.app_version,
     openapi_url="/openapi.json",
     docs_url=None,
-    redoc_url=None,  # Desactivamos el predeterminado para usar uno personalizado
+    redoc_url=None,
 )
+
+# Servir archivos estáticos localmente para evitar problemas de CDN
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Configure CORS
 app.add_middleware(
@@ -24,13 +28,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Custom ReDoc route using alternative CDN (unpkg)
+# Custom ReDoc route using LOCAL assets
 @app.get("/docs", include_in_schema=False)
 async def custom_redoc_html():
+    import logging
+    logging.info("Accediendo a la documentación ReDoc (Auto-hospedada)")
     return get_redoc_html(
         openapi_url=app.openapi_url,
         title=f"{app.title} - ReDoc",
-        redoc_js_url="https://unpkg.com/redoc@next/bundles/redoc.standalone.js",
+        redoc_js_url="/static/redoc.standalone.js",
     )
 
 # Include Routers
