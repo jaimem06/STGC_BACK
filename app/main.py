@@ -9,9 +9,9 @@ from app.routes import auth
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    openapi_url=f"{settings.api_prefix}/openapi.json",
+    openapi_url="/openapi.json",
     docs_url=None,
-    redoc_url=f"{settings.api_prefix}/docs",
+    redoc_url="/docs",
 )
 
 # Configure CORS

@@ -74,7 +74,7 @@ Para iniciar el microservicio en entorno de desarrollo:
 uvicorn app.main:app --reload
 ```
 
-- **Documentación Técnica (ReDoc):** `http://localhost:8000/api/docs`
+- **Documentación Técnica (ReDoc):** `http://localhost:8000/docs`
 - **Estado del Sistema:** `http://localhost:8000/`
 
 ## Estructura de Directorios
