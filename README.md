@@ -1,4 +1,3 @@
-```markdown
 # Guía de Desarrollo - STGC
 
 Este proyecto utiliza un único repositorio con **ramas huérfanas independientes** para el desarrollo aislado de cada microservicio. Al finalizar el desarrollo, todas las ramas se fusionarán en `main`.
@@ -11,15 +10,12 @@ Este proyecto utiliza un único repositorio con **ramas huérfanas independiente
 * `report-service`: Rama independiente para el submodulo de reportes.
 * `auth-service`: Rama independiente para el submodulo de autenticación y seguridad.
 
----
-
 ## Flujo de Trabajo Diario
 
 ### 1. Cambiar al microservicio a trabajar
 Asegúrate de estar en la rama correcta:
 ```bash
 git checkout nombre-del-servicio
-
 ```
 
 ### 2. Reglas Estrictas de Desarrollo e Ignorados
