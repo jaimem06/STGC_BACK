@@ -29,6 +29,7 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     role_name: str
+    status: Optional[UserStatus] = UserStatus.ACTIVO
 
 class UserOut(UserBase):
     id: str
@@ -66,3 +67,10 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     user_id: Optional[str] = None
     session_token: Optional[str] = None
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+class PasswordResetConfirm(BaseModel):
+    token: str
+    new_password: str

@@ -67,3 +67,27 @@ def decode_access_token(token: str) -> Optional[dict[str, Any]]:
         )
     except JWTError:
         return None
+
+
+def create_password_reset_token(email: str) -> str:
+    """
+    Genera un token JWT para recuperación de contraseña (10 min).
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=10)
+    to_encode = {"exp": expire, "sub": email, "purpose": "reset_password"}
+    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
+
+
+def verify_password_reset_token(token: str) -> Optional[str]:
+    """
+    Verifica el token de recuperación y devuelve el email si es válido.
+    """
+    try:
+        payload = jwt.decode(
+            token, settings.secret_key, algorithms=[settings.jwt_algorithm]
+        )
+        if payload.get("purpose") != "reset_password":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None

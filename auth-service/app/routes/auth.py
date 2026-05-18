@@ -5,13 +5,17 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from prisma import Prisma, errors
 
 from app.database import get_db
-from app.schemas.user import UserCreate, UserOut, Token, UserLogin
+from app.dependencies import log_user_action, require_manage_users
+from app.schemas.user import UserCreate, UserOut, Token, UserLogin, PasswordResetRequest, PasswordResetConfirm
 from app.security import (
     get_password_hash,
     verify_password,
     create_access_token,
     generate_session_token,
+    create_password_reset_token,
+    verify_password_reset_token,
 )
+from app.utils.email import send_password_reset_email
 from app.config import settings
 from app.limiter import limiter
 
@@ -22,8 +26,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
     "/register", 
     response_model=UserOut, 
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_manage_users)],
     responses={
         400: {"description": "Error en los datos de entrada o el email ya existe"},
+        403: {"description": "Permisos insuficientes"},
         500: {"description": "Error interno del servidor"}
     }
 )
@@ -36,6 +42,7 @@ async def register(
     """
     Registra un nuevo usuario en el sistema.
     Requiere un email único y un nombre de rol válido.
+    Solo accesible por ADMIN, GERENTE_GENERAL y GERENTE_OPERACIONES.
     """
     try:
         # 1. Validar si el usuario ya existe
@@ -140,3 +147,74 @@ async def login(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error interno durante la autenticación"
         )
+
+@router.post(
+    "/password-recovery",
+    status_code=status.HTTP_200_OK,
+    summary="Solicitar recuperación de contraseña",
+    responses={500: {"description": "Error interno"}}
+)
+@limiter.limit("3/minute")
+async def recover_password(
+    request: Request,
+    data: PasswordResetRequest,
+    db: Annotated[Prisma, Depends(get_db)]
+):
+    """
+    Genera un token de recuperación y lo envía al correo si el usuario existe.
+    """
+    try:
+        user = await db.user.find_unique(where={"email": data.email})
+        
+        # Por seguridad, siempre devolvemos 200 aunque el usuario no exista
+        if user:
+            token = create_password_reset_token(data.email)
+            send_password_reset_email(data.email, token)
+            
+        return {"message": "Si el correo está registrado, recibirás un enlace de recuperación"}
+    except Exception as e:
+        logger.error(f"Error en recuperación de contraseña: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error al procesar la recuperación")
+
+@router.post(
+    "/reset-password",
+    status_code=status.HTTP_200_OK,
+    summary="Restablecer contraseña con token",
+    responses={
+        400: {"description": "Token inválido o expirado"},
+        404: {"description": "Usuario no encontrado"}
+    }
+)
+async def reset_password(
+    data: PasswordResetConfirm,
+    db: Annotated[Prisma, Depends(get_db)]
+):
+    """
+    Valida el token de recuperación y actualiza la contraseña del usuario.
+    """
+    email = verify_password_reset_token(data.token)
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="El token es inválido o ha expirado"
+        )
+    
+    try:
+        user = await db.user.find_unique(where={"email": email})
+        if not user:
+            raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        
+        # Actualizar contraseña y rotar session_token por seguridad
+        await db.user.update(
+            where={"email": email},
+            data={
+                "password_hash": get_password_hash(data.new_password),
+                "session_token": generate_session_token()
+            }
+        )
+        return {"message": "Contraseña actualizada exitosamente"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error al resetear contraseña: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error interno al actualizar la contraseña")

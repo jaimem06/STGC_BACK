@@ -33,7 +33,7 @@ async def main():
     roles_data = [
         {"name": "ADMIN", "description": "Super Usuario - Acceso Total", "perms": ["all_access"]},
         {"name": "GERENTE_GENERAL", "description": "Gerencia General - Gestión de Usuarios", "perms": ["manage_users", "view_audit"]},
-        {"name": "GERENTE_OPERACIONES", "description": "Gerencia de Operaciones", "perms": ["operaciones_finca"]},
+        {"name": "GERENTE_OPERACIONES", "description": "Gerencia de Operaciones - Gestión de Usuarios", "perms": ["manage_users", "operaciones_finca"]},
         {"name": "CAPATAZ", "description": "Capataz de campo", "perms": ["operaciones_finca"]},
         {"name": "SEMBRADOR", "description": "Personal de siembra", "perms": []},
         {"name": "RECOLECTOR", "description": "Personal de recolección", "perms": []},
@@ -68,7 +68,7 @@ async def main():
         )
 
     await db.disconnect()
-    print("Seed actualizado exitosamente con todos los roles de la finca.")
+    print("Seed actualizado exitosamente con jerarquía de gestión de usuarios.")
 
 if __name__ == "__main__":
     asyncio.run(main())
