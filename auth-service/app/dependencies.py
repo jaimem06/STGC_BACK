@@ -54,12 +54,22 @@ async def get_current_user(
 async def get_current_active_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
-    if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Usuario inactivo",
-        )
-    return current_user
+    if current_user.status == "ACTIVO":
+        return current_user
+    
+    if current_user.status == "INACTIVO":
+        detail = "Tu cuenta está inactiva. Contacta al administrador."
+    elif current_user.status == "SUSPENDIDO":
+        detail = "Tu cuenta ha sido suspendida temporalmente."
+    elif current_user.status == "PENDIENTE":
+        detail = "Tu cuenta está pendiente de validación."
+    else:
+        detail = "Acceso denegado."
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=detail,
+    )
 
 class PermissionChecker:
     def __init__(self, required_permissions: list[str]):

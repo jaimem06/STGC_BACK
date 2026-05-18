@@ -1,5 +1,12 @@
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, ConfigDict
+from enum import Enum
+
+class UserStatus(str, Enum):
+    ACTIVO = "ACTIVO"
+    INACTIVO = "INACTIVO"
+    SUSPENDIDO = "SUSPENDIDO"
+    PENDIENTE = "PENDIENTE"
 
 class PermissionOut(BaseModel):
     id: str
@@ -26,7 +33,7 @@ class UserCreate(UserBase):
 class UserOut(UserBase):
     id: str
     role: RoleOut
-    is_active: bool
+    status: UserStatus
 
     model_config = ConfigDict(from_attributes=True)
 

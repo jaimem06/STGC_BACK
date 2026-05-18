@@ -8,6 +8,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserStatus {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
+  PENDIENTE
+}
+
 model Role {
   id          String       @id @default(uuid())
   name        String       @unique
@@ -34,7 +41,7 @@ model User {
   password_hash String
   role_id       String
   role          Role       @relation(fields: [role_id], references: [id])
-  is_active     Boolean    @default(true)
+  status        UserStatus @default(ACTIVO)
   session_token String?    @unique
   audit_logs    AuditLog[]
 
