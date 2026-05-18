@@ -6,10 +6,11 @@ from prisma import Prisma, errors
 from app.database import get_db
 from app.dependencies import require_manage_users, log_user_action, require_all_access
 from app.schemas.user import RoleOut, PermissionOut
+from app.core import endpoints
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/roles", tags=["Role Management"])
+router = APIRouter(prefix=endpoints.ROLES_PREFIX, tags=["Role Management"])
 
 class RoleCreate(BaseModel):
     name: str
@@ -21,7 +22,7 @@ class PermissionCreate(BaseModel):
     description: str | None = None
 
 @router.get(
-    "/", 
+    endpoints.ROLES_LIST, 
     response_model=List[RoleOut], 
     dependencies=[Depends(require_manage_users)],
     responses={500: {"description": "Error interno"}}
@@ -35,7 +36,7 @@ async def list_roles(db: Annotated[Prisma, Depends(get_db)]):
         raise HTTPException(status_code=500, detail="Error al recuperar los roles")
 
 @router.post(
-    "/", 
+    endpoints.ROLES_CREATE, 
     response_model=RoleOut, 
     status_code=status.HTTP_201_CREATED,
     responses={
@@ -73,7 +74,7 @@ async def create_role(
         raise HTTPException(status_code=500, detail="Error interno al crear el rol")
 
 @router.get(
-    "/permissions", 
+    endpoints.ROLES_PERMISSIONS_LIST, 
     response_model=List[PermissionOut], 
     dependencies=[Depends(require_manage_users)],
     responses={500: {"description": "Error interno"}}
@@ -87,7 +88,7 @@ async def list_permissions(db: Annotated[Prisma, Depends(get_db)]):
         raise HTTPException(status_code=500, detail="Error al recuperar los permisos")
 
 @router.post(
-    "/permissions", 
+    endpoints.ROLES_PERMISSIONS_CREATE, 
     response_model=PermissionOut, 
     status_code=status.HTTP_201_CREATED,
     responses={
@@ -120,7 +121,7 @@ async def create_permission(
         raise HTTPException(status_code=500, detail="Error interno al crear el permiso")
 
 @router.put(
-    "/{role_id}", 
+    endpoints.ROLES_UPDATE, 
     response_model=RoleOut,
     responses={
         404: {"description": "Rol no encontrado"},
@@ -158,7 +159,7 @@ async def update_role(
         raise HTTPException(status_code=500, detail="Error interno al actualizar el rol")
 
 @router.delete(
-    "/{role_id}", 
+    endpoints.ROLES_DELETE, 
     status_code=status.HTTP_204_NO_CONTENT,
     responses={
         400: {"description": "El rol tiene usuarios asociados"},

@@ -18,12 +18,13 @@ from app.security import (
 from app.utils.email import send_password_reset_email
 from app.config import settings
 from app.limiter import limiter
+from app.core import endpoints
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/auth", tags=["Authentication"])
+router = APIRouter(prefix=endpoints.AUTH_PREFIX, tags=["Authentication"])
 
 @router.post(
-    "/register", 
+    endpoints.AUTH_REGISTER, 
     response_model=UserOut, 
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_manage_users)],
@@ -89,7 +90,7 @@ async def register(
         )
 
 @router.post(
-    "/login", 
+    endpoints.AUTH_LOGIN, 
     response_model=Token,
     summary="Iniciar sesión",
     description="Autentica al usuario mediante email y contraseña (JSON). Devuelve un JWT de acceso.",
@@ -149,7 +150,7 @@ async def login(
         )
 
 @router.post(
-    "/password-recovery",
+    endpoints.AUTH_RECOVERY,
     status_code=status.HTTP_200_OK,
     summary="Solicitar recuperación de contraseña",
     responses={500: {"description": "Error interno"}}
@@ -177,7 +178,7 @@ async def recover_password(
         raise HTTPException(status_code=500, detail="Error al procesar la recuperación")
 
 @router.post(
-    "/reset-password",
+    endpoints.AUTH_RESET,
     status_code=status.HTTP_200_OK,
     summary="Restablecer contraseña con token",
     responses={

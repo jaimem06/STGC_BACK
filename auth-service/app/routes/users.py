@@ -6,17 +6,18 @@ from prisma import Prisma, errors
 from app.database import get_db
 from app.dependencies import require_manage_users, log_user_action
 from app.schemas.user import UserOut, UserStatus
+from app.core import endpoints
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/users", tags=["User Management"])
+router = APIRouter(prefix=endpoints.USERS_PREFIX, tags=["User Management"])
 
 class UserUpdate(BaseModel):
     role_name: Optional[str] = None
     status: Optional[UserStatus] = None
 
 @router.get(
-    "/", 
+    endpoints.USERS_LIST, 
     response_model=List[UserOut],
     responses={
         403: {"description": "Permisos insuficientes"},
@@ -35,7 +36,7 @@ async def list_users(
         raise HTTPException(status_code=500, detail="Error al recuperar la lista de usuarios")
 
 @router.patch(
-    "/{user_id}", 
+    endpoints.USERS_UPDATE, 
     response_model=UserOut,
     responses={
         400: {"description": "Datos de actualización inválidos"},

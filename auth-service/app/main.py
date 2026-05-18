@@ -10,6 +10,7 @@ from app.database import db
 from app.dependencies import log_user_action, require_all_access
 from app.routes import auth, roles, users
 from app.limiter import limiter
+from app.core import endpoints
 
 app = FastAPI(
     title=settings.app_name,
@@ -32,7 +33,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/docs", include_in_schema=False)
+@app.get(endpoints.DOCS, include_in_schema=False)
 async def custom_redoc_html():
     return get_redoc_html(
         openapi_url=app.openapi_url,
@@ -52,7 +53,7 @@ async def startup():
 async def shutdown():
     await db.disconnect()
 
-@app.get("/", tags=["Health"])
+@app.get(endpoints.HEALTH_CHECK, tags=["Health"])
 async def health_check():
     return {
         "status": "online",
@@ -61,7 +62,7 @@ async def health_check():
     }
 
 @app.get(
-    f"{settings.api_prefix}/admin-only",
+    f"{settings.api_prefix}{endpoints.ADMIN_ONLY_TEST}",
     dependencies=[Depends(require_all_access), Depends(log_user_action("access_admin_area"))],
     tags=["Test"]
 )
