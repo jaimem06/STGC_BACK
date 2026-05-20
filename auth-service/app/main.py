@@ -47,7 +47,21 @@ app.include_router(users.router, prefix=settings.api_prefix)
 
 @app.on_event("startup")
 async def startup():
-    await db.connect()
+    import asyncio
+    retries = 3
+    for i in range(retries):
+        try:
+            # Timeout aumentado para Cold Start de Neon
+            await db.connect(timeout=30)
+            logger.info("Database connected successfully")
+            return
+        except Exception as e:
+            if i < retries - 1:
+                logger.warning(f"Database connection attempt {i+1} failed. Retrying in 2s...")
+                await asyncio.sleep(2)
+            else:
+                logger.error(f"Could not connect to database after {retries} attempts: {e}")
+                raise e
 
 @app.on_event("shutdown")
 async def shutdown():
