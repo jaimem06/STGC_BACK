@@ -4,6 +4,8 @@ from fastapi.openapi.docs import get_redoc_html
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+import logging
+import sys
 
 from app.config import settings
 from app.database import db
@@ -11,6 +13,14 @@ from app.dependencies import log_user_action, require_all_access
 from app.routes import auth, roles, users
 from app.limiter import limiter
 from app.core import endpoints
+
+# Configuración básica de logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout
+)
+logger = logging.getLogger("auth-service")
 
 app = FastAPI(
     title=settings.app_name,
