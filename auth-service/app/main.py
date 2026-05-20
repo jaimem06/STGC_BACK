@@ -1,6 +1,3 @@
-import logging
-import sys
-import os
 from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html
@@ -15,13 +12,6 @@ from app.routes import auth, roles, users
 from app.limiter import limiter
 from app.core import endpoints
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    stream=sys.stdout
-)
-logger = logging.getLogger("auth-service")
-
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
@@ -33,8 +23,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
@@ -58,29 +47,28 @@ app.include_router(users.router, prefix=settings.api_prefix)
 
 @app.on_event("startup")
 async def startup():
-    if not settings.database_url:
-        logger.error("DATABASE_URL is missing")
-        return
-    try:
-        await db.connect()
-        logger.info("Database connected")
-    except Exception as e:
-        logger.error(f"Database connection failed: {e}")
-        raise e
+    await db.connect()
 
 @app.on_event("shutdown")
 async def shutdown():
-    if db.is_connected():
-        await db.disconnect()
+    await db.disconnect()
 
 @app.get(endpoints.HEALTH_CHECK, tags=["Health"])
 async def health_check():
     return {
         "status": "online",
         "app": settings.app_name,
-        "database": "connected" if db.is_connected() else "disconnected"
+        "version": settings.app_version
     }
+
+@app.get(
+    f"{settings.api_prefix}{endpoints.ADMIN_ONLY_TEST}",
+    dependencies=[Depends(require_all_access), Depends(log_user_action("access_admin_area"))],
+    tags=["Test"]
+)
+async def admin_only_route():
+    return {"message": "Bienvenido, Administrador o Gerente General"}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)

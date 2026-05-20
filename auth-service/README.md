@@ -10,32 +10,33 @@ Microservicio base especializado en autenticación, control de acceso basado en 
 - **Seguridad:** JWT con hashing BCrypt, Rate Limiting (slowapi) y control de sesión única
 - **Configuración:** Pydantic Settings con soporte para archivos .env
 
-## Funcionalidades Implementadas
+## Funcionalidades Implementadas (Base + Mejoras)
 
 ### Gestión de Identidad y Acceso
 - **Autenticación Segura:** Inicio de sesión y registro con validación de roles dinámicos.
+- **Recuperación de Contraseña:** Flujo completo de recuperación mediante tokens firmados y notificaciones por correo.
 - **Perfil de Usuario:** Endpoint `/me` que permite verificar la identidad, roles y permisos detallados del usuario actual.
-- **Jerarquía de Roles:** Soporte para roles de administración (ADMIN, GERENTE_GENERAL) con acceso total heredado y roles operativos.
 - **Sesión Única:** Control de `session_token` para invalidar sesiones previas al iniciar una nueva.
 
 ### Gestión de Usuarios Mejorada
-- **Información Extendida:** Campos para nombres, apellidos, identificador único (ID/Cédula) y número de teléfono.
-- **Suspensión Temporal:** Lógica para suspender usuarios mediante fechas de inicio y fin (`suspended_from`, `suspended_until`). El sistema bloquea automáticamente el acceso durante este periodo.
+- **Información Extendida:** Campos para nombres, apellidos, identificador único (Cédula/ID) y número de teléfono.
+- **Suspensión Temporal:** Lógica para suspender usuarios mediante fechas de inicio y fin (`suspended_from`, `suspended_until`). El sistema bloquea automáticamente el acceso durante este periodo e informa de la fecha de desbloqueo.
 
 ### Gestión de Roles y Permisos Dinámicos
 - **CRUD de Roles:** Capacidad de crear, actualizar y eliminar roles del sistema.
 - **Lógica de Eliminación Segura:** Al eliminar un rol, todos los usuarios asignados a él son reasignados automáticamente al rol predeterminado (**CAJERO_MESERO**) para evitar usuarios huérfanos.
 
 ### Auditoría Institucional
-- **Middleware Asíncrono:** Registro automático de acciones, endpoints e IPs en segundo plano (Background Tasks) para no afectar el rendimiento percibido por el usuario.
+- **Middleware Asíncrono:** Registro automático de acciones, endpoints e IPs en segundo plano (Background Tasks).
 
 ## Endpoints Principales
 
 | Método | Ruta | Descripción |
 | :--- | :--- | :--- |
-| `POST` | `/api/auth/register` | Registro de nuevos usuarios (Admin only). |
+| `POST` | `/api/auth/register` | Registro de nuevos usuarios con datos personales. |
 | `POST` | `/api/auth/login` | Autenticación y obtención de token JWT. |
-| `GET` | `/api/auth/me` | Obtener perfil y permisos del usuario actual. |
+| `GET` | `/api/auth/me` | Obtener perfil completo y permisos del usuario actual. |
+| `POST` | `/api/auth/password-recovery` | Solicitar enlace de recuperación de contraseña. |
 | `PATCH` | `/api/users/{id}/suspend` | Establecer periodo de suspensión para un usuario. |
 | `DELETE` | `/api/roles/{id}` | Eliminar rol y reasignar usuarios al rol básico. |
 
@@ -82,7 +83,7 @@ uvicorn app.main:app --reload
 ```
 
 - **Documentación ReDoc:** `http://localhost:8000/docs`
-- **Health Check:** `http://localhost:8000/`
+- **Estado del Sistema:** `http://localhost:8000/`
 
 ## Estructura de Directorios
 
@@ -92,7 +93,7 @@ auth-service/
 │   ├── routes/          # Endpoints de autenticación, usuarios y roles
 │   ├── schemas/         # Modelos de validación Pydantic
 │   ├── security.py      # Lógica de seguridad y JWT
-│   ├── dependencies.py  # Inyección de dependencias y RBAC
+│   ├── dependencies.py  # RBAC y Auditoría asíncrona
 │   ├── database.py      # Cliente Prisma
 │   ├── limiter.py       # Configuración de Rate Limiting
 │   └── main.py          # Punto de entrada FastAPI

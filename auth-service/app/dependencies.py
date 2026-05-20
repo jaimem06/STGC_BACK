@@ -55,6 +55,7 @@ async def get_current_user(
 async def get_current_active_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
+    # 1. Verificar si el usuario está suspendido por fechas
     now = datetime.now(timezone.utc)
     
     if current_user.suspended_from and current_user.suspended_until:
@@ -67,6 +68,7 @@ async def get_current_active_user(
                 detail=f"Cuenta suspendida hasta {susp_until.strftime('%Y-%m-%d %H:%M:%S')} UTC",
             )
 
+    # 2. Verificar estado
     if current_user.status != "ACTIVO":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

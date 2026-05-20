@@ -58,14 +58,6 @@ class UserCreate(UserBase):
             )
         return v
 
-class UserUpdate(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    identifier: Optional[str] = None
-    phone_number: Optional[str] = None
-    email: Optional[EmailStr] = None
-    status: Optional[UserStatus] = None
-
 class UserSuspend(BaseModel):
     suspended_from: Optional[datetime] = None
     suspended_until: Optional[datetime] = None

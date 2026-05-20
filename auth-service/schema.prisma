@@ -36,20 +36,20 @@ model Permission {
 }
 
 model User {
-  id            String     @id @default(uuid())
-  email         String     @unique
-  first_name    String?
-  last_name     String?
-  identifier    String?    @unique
-  phone_number  String?
-  password_hash String
-  role_id       String
-  role          Role       @relation(fields: [role_id], references: [id])
-  status        UserStatus @default(ACTIVO)
-  suspended_from DateTime?
+  id              String     @id @default(uuid())
+  email           String     @unique
+  first_name      String?
+  last_name       String?
+  identifier      String?    @unique
+  phone_number    String?
+  password_hash   String
+  role_id         String
+  role            Role       @relation(fields: [role_id], references: [id])
+  status          UserStatus @default(ACTIVO)
+  suspended_from  DateTime?
   suspended_until DateTime?
-  session_token String?    @unique
-  audit_logs    AuditLog[]
+  session_token   String?    @unique
+  audit_logs      AuditLog[]
 
   @@map("users")
 }
