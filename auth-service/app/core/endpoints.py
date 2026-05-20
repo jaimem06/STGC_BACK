@@ -9,6 +9,7 @@ AUTH_PREFIX = "/auth"
 # Auth Endpoints
 AUTH_REGISTER = "/register"
 AUTH_LOGIN = "/login"
+AUTH_ME = "/me"
 AUTH_RECOVERY = "/password-recovery"
 AUTH_RESET = "/reset-password"
 
@@ -29,6 +30,7 @@ USERS_PREFIX = "/users"
 # Users Endpoints
 USERS_LIST = "/"
 USERS_UPDATE = "/{user_id}"
+USERS_SUSPEND = "/{user_id}/suspend"
 
 # Global / Health
 HEALTH_CHECK = "/"

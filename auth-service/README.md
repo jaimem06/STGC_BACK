@@ -1,37 +1,49 @@
 # STGC_BACK: Sistema de Trazabilidad y Gestión de Café
 
-Microservicio base especializado en autenticación, control de acceso basado en roles (RBAC) y auditoría para la Finca Tierra Fértil. Esta solución está optimizada para entornos Python modernos, utilizando Prisma ORM para garantizar la compatibilidad con las versiones más recientes del lenguaje y PostgreSQL asíncrono.
+Microservicio base especializado en autenticación, control de acceso basado en roles dinámicos (RBAC) y auditoría para la Finca Tierra Fértil. Esta solución está optimizada para entornos Python modernos, utilizando Prisma ORM para garantizar la compatibilidad con las versiones más recientes del lenguaje y PostgreSQL asíncrono.
 
 ## Especificaciones Técnicas
 
 - **Framework:** FastAPI
 - **ORM:** Prisma ORM (Motor de consultas en Rust)
 - **Base de Datos:** PostgreSQL (Neon)
-- **Seguridad:** JWT con hashing BCrypt y Rate Limiting (slowapi)
-- **Gestión de Sesiones:** Control de token de sesión único por usuario
+- **Seguridad:** JWT con hashing BCrypt, Rate Limiting (slowapi) y control de sesión única
+- **Configuración:** Pydantic Settings con soporte para archivos .env
 
 ## Funcionalidades Implementadas
 
-### Autenticación y Registro
-- **POST /api/auth/register**: Registro de usuarios con validación de roles (Rate Limited).
-- **POST /api/auth/login**: Validación y generación de JWT con rotación de `session_token` (Rate Limited).
+### Gestión de Identidad y Acceso
+- **Autenticación Segura:** Inicio de sesión y registro con validación de roles dinámicos.
+- **Perfil de Usuario:** Endpoint `/me` que permite verificar la identidad, roles y permisos detallados del usuario actual.
+- **Jerarquía de Roles:** Soporte para roles de administración (ADMIN, GERENTE_GENERAL) con acceso total heredado y roles operativos.
+- **Sesión Única:** Control de `session_token` para invalidar sesiones previas al iniciar una nueva.
 
-### Control de Acceso (RBAC)
-Jerarquía de permisos optimizada para la cadena productiva del café:
-- **Nivel Directivo:** ADMIN, GERENTE_GENERAL (Acceso total heredado).
-- **Nivel Operativo:** CAPATAZ, SEMBRADOR, RECOLECTOR, CLASIFICADOR, etc.
-- **Nivel Técnico:** TOSTADOR, GESTOR_CALIDAD, CATADOR, BARISTA.
+### Gestión de Usuarios Mejorada
+- **Información Extendida:** Campos para nombres, apellidos, identificador único (ID/Cédula) y número de teléfono.
+- **Suspensión Temporal:** Lógica para suspender usuarios mediante fechas de inicio y fin (`suspended_from`, `suspended_until`). El sistema bloquea automáticamente el acceso durante este periodo.
 
-### Auditoría
-Middleware asíncrono (Background Tasks) que registra en la tabla `audit_logs`:
-- Usuario, acción, endpoint e IP de origen.
+### Gestión de Roles y Permisos Dinámicos
+- **CRUD de Roles:** Capacidad de crear, actualizar y eliminar roles del sistema.
+- **Lógica de Eliminación Segura:** Al eliminar un rol, todos los usuarios asignados a él son reasignados automáticamente al rol predeterminado (**CAJERO_MESERO**) para evitar usuarios huérfanos.
+
+### Auditoría Institucional
+- **Middleware Asíncrono:** Registro automático de acciones, endpoints e IPs en segundo plano (Background Tasks) para no afectar el rendimiento percibido por el usuario.
+
+## Endpoints Principales
+
+| Método | Ruta | Descripción |
+| :--- | :--- | :--- |
+| `POST` | `/api/auth/register` | Registro de nuevos usuarios (Admin only). |
+| `POST` | `/api/auth/login` | Autenticación y obtención de token JWT. |
+| `GET` | `/api/auth/me` | Obtener perfil y permisos del usuario actual. |
+| `PATCH` | `/api/users/{id}/suspend` | Establecer periodo de suspensión para un usuario. |
+| `DELETE` | `/api/roles/{id}` | Eliminar rol y reasignar usuarios al rol básico. |
 
 ## Guía de Instalación y Despliegue
 
 ### Requisitos Previos
 - Python 3.10+ (Compatible con Python 3.14 Alpha)
-- Instancia de PostgreSQL (Neon)
-- Git
+- Instancia de PostgreSQL (Recomendado: Neon)
 
 ### Procedimiento de Configuración
 
@@ -69,22 +81,22 @@ Middleware asíncrono (Background Tasks) que registra en la tabla `audit_logs`:
 uvicorn app.main:app --reload
 ```
 
-- **Documentación Técnica (ReDoc):** `http://localhost:8000/docs`
-- **Estado del Sistema:** `http://localhost:8000/`
+- **Documentación ReDoc:** `http://localhost:8000/docs`
+- **Health Check:** `http://localhost:8000/`
 
 ## Estructura de Directorios
 
 ```text
 auth-service/
 ├── app/
-│   ├── routes/          # Endpoints de autenticación
-│   ├── schemas/         # Validaciones Pydantic
-│   ├── security.py      # Seguridad y JWT
-│   ├── dependencies.py  # RBAC y Auditoría asíncrona
+│   ├── routes/          # Endpoints de autenticación, usuarios y roles
+│   ├── schemas/         # Modelos de validación Pydantic
+│   ├── security.py      # Lógica de seguridad y JWT
+│   ├── dependencies.py  # Inyección de dependencias y RBAC
 │   ├── database.py      # Cliente Prisma
-│   ├── limiter.py       # Configuración Rate Limit
-│   └── main.py          # Punto de entrada
-├── static/              # Assets de ReDoc (Self-hosted)
-├── schema.prisma        # Definición de modelos Prisma
-└── .env                 # Configuración local
+│   ├── limiter.py       # Configuración de Rate Limiting
+│   └── main.py          # Punto de entrada FastAPI
+├── static/              # Assets de ReDoc (Servidos localmente)
+├── schema.prisma        # Definición central de modelos de datos
+└── .env                 # Parámetros de configuración
 ```

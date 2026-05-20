@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Annotated, Callable
 from fastapi import Depends, HTTPException, Request, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
@@ -23,13 +24,7 @@ async def get_current_user(
 ) -> User:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="No se pudieron validar las credenciales",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-
-    session_invalidated_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Sesión invalidada. Alguien más inició sesión con tu cuenta.",
+        detail="Credenciales inválidas",
         headers={"WWW-Authenticate": "Bearer"},
     )
 
@@ -49,29 +44,36 @@ async def get_current_user(
     )
 
     if user is None or user.session_token != session_token:
-        raise session_invalidated_exception if user else credentials_exception
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión inválida o cuenta no encontrada",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     return user
 
 async def get_current_active_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> User:
-    if current_user.status == "ACTIVO":
-        return current_user
+    now = datetime.now(timezone.utc)
     
-    if current_user.status == "INACTIVO":
-        detail = "Tu cuenta está inactiva. Contacta al administrador."
-    elif current_user.status == "SUSPENDIDO":
-        detail = "Tu cuenta ha sido suspendida temporalmente."
-    elif current_user.status == "PENDIENTE":
-        detail = "Tu cuenta está pendiente de validación."
-    else:
-        detail = "Acceso denegado."
+    if current_user.suspended_from and current_user.suspended_until:
+        susp_from = current_user.suspended_from.replace(tzinfo=timezone.utc) if current_user.suspended_from.tzinfo is None else current_user.suspended_from
+        susp_until = current_user.suspended_until.replace(tzinfo=timezone.utc) if current_user.suspended_until.tzinfo is None else current_user.suspended_until
 
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=detail,
-    )
+        if susp_from <= now <= susp_until:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Cuenta suspendida hasta {susp_until.strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            )
+
+    if current_user.status != "ACTIVO":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Acceso denegado: {current_user.status}",
+        )
+    
+    return current_user
 
 class PermissionChecker:
     def __init__(self, required_permissions: list[str]):
@@ -83,7 +85,6 @@ class PermissionChecker:
     ) -> User:
         user_permissions = [p.name for p in current_user.role.permissions]
 
-        # El permiso 'all_access' otorga acceso total independientemente de lo requerido
         if "all_access" in user_permissions:
             return current_user
 
@@ -91,19 +92,12 @@ class PermissionChecker:
             if perm not in user_permissions:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"No tienes el permiso necesario: {perm}",
+                    detail=f"Falta permiso: {perm}",
                 )
         return current_user
 
-# Dependencias de permisos comunes
 require_all_access = PermissionChecker(["all_access"])
 require_manage_users = PermissionChecker(["manage_users"])
-require_productor = PermissionChecker(["productor_actions"])
-require_catador = PermissionChecker(["catador_actions"])
-require_barista = PermissionChecker(["barista_actions"])
-require_capataz = PermissionChecker(["capataz_actions"])
-require_tostador = PermissionChecker(["tostador_actions"])
-require_gestor_calidad = PermissionChecker(["calidad_actions"])
 
 async def _record_audit_log(db: Prisma, user_id: str, action: str, endpoint: str, ip_address: str):
     try:
@@ -127,12 +121,7 @@ def log_user_action(action: str) -> Callable:
     ):
         ip_address = get_client_ip(request)
         background_tasks.add_task(
-            _record_audit_log, 
-            db, 
-            current_user.id, 
-            action, 
-            str(request.url.path), 
-            ip_address
+            _record_audit_log, db, current_user.id, action, str(request.url.path), ip_address
         )
         return None
     return _log_action_dependency

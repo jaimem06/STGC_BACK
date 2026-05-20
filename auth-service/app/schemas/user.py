@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, ConfigDict, field_validator
 from enum import Enum
@@ -30,6 +31,10 @@ class RoleOut(BaseModel):
 
 class UserBase(BaseModel):
     email: EmailStr
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    identifier: Optional[str] = None
+    phone_number: Optional[str] = None
 
     @field_validator("email")
     @classmethod
@@ -53,10 +58,24 @@ class UserCreate(UserBase):
             )
         return v
 
+class UserUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    identifier: Optional[str] = None
+    phone_number: Optional[str] = None
+    email: Optional[EmailStr] = None
+    status: Optional[UserStatus] = None
+
+class UserSuspend(BaseModel):
+    suspended_from: Optional[datetime] = None
+    suspended_until: Optional[datetime] = None
+
 class UserOut(UserBase):
     id: str
     role: RoleOut
     status: UserStatus
+    suspended_from: Optional[datetime] = None
+    suspended_until: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
