@@ -10,28 +10,31 @@ assignees: ''
 ---
 name: Historia de Usuario
 about: Formato estándar para nuevas funcionalidades
-title: "[HU]: "
+title: "[Auth] HU: "
 labels: "service:auth"
 assignees: ''
 ---
 
 ### 📖 Descripción
-Permitir que los usuarios... 
+[Inserta aquí la descripción]
 
-* **Como:** [Rol]
-* **Quiero:** [Acción]
+* **Como:** [Rol del usuario]
+* **Quiero:** [Acción a realizar]
 * **Para:** [Objetivo]
 
 ---
 
 ### 📋 Estado: `🟡 Pendiente`
+*(Opciones: 🟡 Pendiente | 🟢 En Desarrollo | 🔵 En Revisión | ✅ Completado)*
 
 ---
 
 ### ✅ Criterios de Aceptación
-- [ ] **CA1:** - [ ] **CA2:** - [ ] **CA3:** ---
+- [ ] **CA1:** - [ ] **CA2:** - [ ] **CA3:** - [ ] **CA4:** ---
 
 ### 🛠 Detalles Técnicos
 * **Prioridad:** 🔴 Must Have
+* **Estimación de Velocidad (Puntos):** [ ]
 * **Revisado por:** Ing. Francisco Javier Álvarez Pineda.
 * **Módulo:** `auth-service`
+* **Rama:** `auth-service`
