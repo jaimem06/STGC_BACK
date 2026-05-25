@@ -2,10 +2,12 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
+    Extension,
 };
 use uuid::Uuid;
 use sqlx::PgPool;
 use crate::models::{InventarioItem, MovimientoStock};
+use crate::utils::audit::enviar_auditoria;
 
 #[utoipa::path(
     get,
@@ -63,7 +65,19 @@ pub async fn get_item(
 )]
 pub async fn create_movement(
     State(_pool): State<PgPool>,
-    Json(_payload): Json<MovimientoStock>,
+    Extension(user_id): Extension<String>,
+    Json(payload): Json<MovimientoStock>,
 ) -> Result<(StatusCode, Json<MovimientoStock>), StatusCode> {
-    Ok((StatusCode::CREATED, Json(_payload)))
+    // Ejemplo de lógica de negocio: mover un lote de café
+    tracing::info!("Usuario {} registrando movimiento de stock", user_id);
+
+    // Enviar auditoría de forma asíncrona (segundo plano)
+    enviar_auditoria(
+        user_id,
+        "REGISTRO_MOVIMIENTO_INVENTARIO".to_string(),
+        "/inventario/movimientos".to_string(),
+        "N/A".to_string(), // En un entorno real se extraería de ConnectInfo<SocketAddr>
+    );
+
+    Ok((StatusCode::CREATED, Json(payload)))
 }

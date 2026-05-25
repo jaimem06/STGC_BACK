@@ -54,6 +54,7 @@ pub fn create_router(pool: PgPool) -> Router {
     Router::new()
         .nest("/inventario", inventory_routes)
         .nest("/trazabilidad", traceability_routes)
-        .merge(Redoc::with_url("/doc", ApiDoc::openapi()))
+        .merge(Redoc::with_url("/docs", ApiDoc::openapi()))
+        .layer(axum::middleware::from_fn(crate::middleware::auth::auth_middleware))
         .with_state(pool)
 }

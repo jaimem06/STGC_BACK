@@ -40,7 +40,7 @@ inventory-service/
 - `GET /inventario`: Lista todos los elementos disponibles.
 - `POST /inventario/movimientos`: Registra entradas/salidas de stock.
 - `POST /trazabilidad/lotes/{id}/transicion`: Ejecuta el cambio de fase de un lote.
-- `GET /doc`: Documentación interactiva y detallada de la API.
+- `GET /docs`: Documentación interactiva y detallada de la API.
 
 ## Requisitos Previos
 
@@ -65,7 +65,7 @@ inventory-service/
 
 3. **Ver Documentación**:
    Una vez iniciado el servidor, abre tu navegador en:
-   [http://localhost:3001/doc](http://localhost:3001/doc)
+   [http://localhost:3001/docs](http://localhost:3001/docs)
 
 ## Tecnologías Utilizadas
 
