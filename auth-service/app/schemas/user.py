@@ -21,12 +21,20 @@ class UserBase(BaseModel):
 class UserCreate(UserBase):
     password: str
     role_name: str
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    identifier: Optional[str] = None
+    phone_number: Optional[str] = None
     status: Optional[UserStatus] = UserStatus.ACTIVO
 
 class UserOut(UserBase):
     id: str
     role: RoleOut
     status: UserStatus
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    identifier: Optional[str] = None
+    phone_number: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
