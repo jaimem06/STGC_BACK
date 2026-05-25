@@ -10,7 +10,7 @@ import sys
 from app.config import settings
 from app.database import db
 from app.dependencies import log_user_action, require_all_access
-from app.routes import auth, roles, users
+from app.routes import auth, roles, users, internal
 from app.limiter import limiter
 from app.core import endpoints
 
@@ -54,6 +54,7 @@ async def custom_redoc_html():
 app.include_router(auth.router, prefix=settings.api_prefix)
 app.include_router(roles.router, prefix=settings.api_prefix)
 app.include_router(users.router, prefix=settings.api_prefix)
+app.include_router(internal.router, prefix=settings.api_prefix)
 
 @app.on_event("startup")
 async def startup():
@@ -77,7 +78,12 @@ async def startup():
 async def shutdown():
     await db.disconnect()
 
-@app.get(endpoints.HEALTH_CHECK, tags=["Health"])
+@app.get(
+    endpoints.HEALTH_CHECK, 
+    tags=["Salud"],
+    summary="Comprobar Estado del Servidor",
+    description="Verifica si el servicio de autenticación está en línea y devuelve la versión actual."
+)
 async def health_check():
     return {
         "status": "online",
@@ -88,7 +94,9 @@ async def health_check():
 @app.get(
     f"{settings.api_prefix}{endpoints.ADMIN_ONLY_TEST}",
     dependencies=[Depends(require_all_access), Depends(log_user_action("access_admin_area"))],
-    tags=["Test"]
+    tags=["Pruebas"],
+    summary="Ruta de Prueba para Administradores",
+    description="Endpoint de prueba para validar el acceso restringido a usuarios con el rol ADMIN."
 )
 async def admin_only_route():
     return {"message": "Bienvenido, Administrador o Gerente General"}

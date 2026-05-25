@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: str = "change-me-in-production"
+    internal_api_key: str = "change-me-in-production"
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
@@ -28,9 +29,8 @@ class Settings(BaseSettings):
     smtp_password: Optional[str] = None
     smtp_from_email: Optional[str] = None
     smtp_tls: bool = True
-    frontend_url: str = "http://localhost:3000"
+    frontend_url: str = "https://stgc-front.onrender.com"
 
     debug: bool = False
-
 
 settings = Settings()

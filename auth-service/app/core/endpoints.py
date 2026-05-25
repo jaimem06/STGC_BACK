@@ -19,8 +19,6 @@ ROLES_PREFIX = "/roles"
 # Roles Endpoints
 ROLES_LIST = "/"
 ROLES_CREATE = "/"
-ROLES_PERMISSIONS_LIST = "/permissions"
-ROLES_PERMISSIONS_CREATE = "/permissions"
 ROLES_UPDATE = "/{role_id}"
 ROLES_DELETE = "/{role_id}"
 

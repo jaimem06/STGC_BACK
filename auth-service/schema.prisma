@@ -21,18 +21,8 @@ model Role {
   description String?
   created_at  DateTime     @default(now())
   users       User[]
-  permissions Permission[] @relation("RoleToPermission")
 
   @@map("roles")
-}
-
-model Permission {
-  id          String   @id @default(uuid())
-  name        String   @unique
-  description String?
-  roles       Role[]   @relation("RoleToPermission")
-
-  @@map("permissions")
 }
 
 model User {

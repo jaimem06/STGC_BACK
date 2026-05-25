@@ -5,19 +5,14 @@ from prisma import Prisma, errors
 
 from app.database import get_db
 from app.dependencies import require_manage_users, log_user_action, require_all_access
-from app.schemas.user import RoleOut, PermissionOut
+from app.schemas.user import RoleOut
 from app.core import endpoints
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix=endpoints.ROLES_PREFIX, tags=["Role Management"])
+router = APIRouter(prefix=endpoints.ROLES_PREFIX, tags=["Gestión de Roles"])
 
 class RoleCreate(BaseModel):
-    name: str
-    description: str | None = None
-    permission_ids: List[str] = []
-
-class PermissionCreate(BaseModel):
     name: str
     description: str | None = None
 
@@ -25,12 +20,14 @@ class PermissionCreate(BaseModel):
     endpoints.ROLES_LIST, 
     response_model=List[RoleOut], 
     dependencies=[Depends(require_manage_users)],
+    summary="Listar Roles",
+    description="Devuelve la lista completa de roles definidos en el sistema.",
     responses={500: {"description": "Error interno"}}
 )
 async def list_roles(db: Annotated[Prisma, Depends(get_db)]):
-    """Lista todos los roles con sus permisos."""
+    """Lista todos los roles."""
     try:
-        return await db.role.find_many(include={"permissions": True})
+        return await db.role.find_many()
     except Exception as e:
         logger.error(f"Error al listar roles: {str(e)}")
         raise HTTPException(status_code=500, detail="Error al recuperar los roles")
@@ -39,6 +36,8 @@ async def list_roles(db: Annotated[Prisma, Depends(get_db)]):
     endpoints.ROLES_CREATE, 
     response_model=RoleOut, 
     status_code=status.HTTP_201_CREATED,
+    summary="Crear Nuevo Rol",
+    description="Crea un nuevo rol en el sistema. Reservado para el Administrador.",
     responses={
         400: {"description": "El rol ya existe"},
         403: {"description": "Permisos insuficientes"},
@@ -51,7 +50,7 @@ async def create_role(
     _ = Depends(require_all_access),
     __ = Depends(log_user_action("create_role"))
 ):
-    """Crea un nuevo rol y le asigna permisos (Solo ADMIN)."""
+    """Crea un nuevo rol (Solo ADMIN)."""
     try:
         existing = await db.role.find_unique(where={"name": role_in.name})
         if existing:
@@ -61,11 +60,7 @@ async def create_role(
             data={
                 "name": role_in.name,
                 "description": role_in.description,
-                "permissions": {
-                    "connect": [{"id": pid} for pid in role_in.permission_ids]
-                }
-            },
-            include={"permissions": True}
+            }
         )
     except HTTPException:
         raise
@@ -73,56 +68,11 @@ async def create_role(
         logger.error(f"Error al crear rol: {str(e)}")
         raise HTTPException(status_code=500, detail="Error interno al crear el rol")
 
-@router.get(
-    endpoints.ROLES_PERMISSIONS_LIST, 
-    response_model=List[PermissionOut], 
-    dependencies=[Depends(require_manage_users)],
-    responses={500: {"description": "Error interno"}}
-)
-async def list_permissions(db: Annotated[Prisma, Depends(get_db)]):
-    """Lista todos los permisos disponibles."""
-    try:
-        return await db.permission.find_many()
-    except Exception as e:
-        logger.error(f"Error al listar permisos: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error al recuperar los permisos")
-
-@router.post(
-    endpoints.ROLES_PERMISSIONS_CREATE, 
-    response_model=PermissionOut, 
-    status_code=status.HTTP_201_CREATED,
-    responses={
-        400: {"description": "El permiso ya existe"},
-        500: {"description": "Error interno"}
-    }
-)
-async def create_permission(
-    perm_in: PermissionCreate,
-    db: Annotated[Prisma, Depends(get_db)],
-    _ = Depends(require_all_access),
-    __ = Depends(log_user_action("create_permission"))
-):
-    """Crea un nuevo permiso granular (Solo ADMIN)."""
-    try:
-        existing = await db.permission.find_unique(where={"name": perm_in.name})
-        if existing:
-            raise HTTPException(status_code=400, detail="El permiso ya existe")
-        
-        return await db.permission.create(
-            data={
-                "name": perm_in.name,
-                "description": perm_in.description
-            }
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error al crear permiso: {str(e)}")
-        raise HTTPException(status_code=500, detail="Error interno al crear el permiso")
-
 @router.put(
     endpoints.ROLES_UPDATE, 
     response_model=RoleOut,
+    summary="Actualizar Rol",
+    description="Modifica el nombre o descripción de un rol existente.",
     responses={
         404: {"description": "Rol no encontrado"},
         500: {"description": "Error interno"}
@@ -135,7 +85,7 @@ async def update_role(
     _ = Depends(require_all_access),
     __ = Depends(log_user_action("update_role"))
 ):
-    """Actualiza un rol y sincroniza sus permisos."""
+    """Actualiza un rol."""
     try:
         role = await db.role.find_unique(where={"id": role_id})
         if not role:
@@ -146,11 +96,7 @@ async def update_role(
             data={
                 "name": role_in.name,
                 "description": role_in.description,
-                "permissions": {
-                    "set": [{"id": pid} for pid in role_in.permission_ids]
-                }
-            },
-            include={"permissions": True}
+            }
         )
     except HTTPException:
         raise
@@ -161,6 +107,8 @@ async def update_role(
 @router.delete(
     endpoints.ROLES_DELETE, 
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Eliminar Rol",
+    description="Elimina un rol del sistema siempre que no tenga usuarios asociados.",
     responses={
         400: {"description": "El rol tiene usuarios asociados"},
         404: {"description": "Rol no encontrado"}

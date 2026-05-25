@@ -35,7 +35,11 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
 ) -> str:
     """
-    Create JWT access token with session_token embedded.
+    Create JWT access token with session_token, user_id and role embedded.
+    
+    NOTE: The settings.secret_key (JWT_SECRET) must be shared with other 
+    microservices to allow them to validate tokens locally without 
+    calling auth-service.
     """
     to_encode = data.copy()
 

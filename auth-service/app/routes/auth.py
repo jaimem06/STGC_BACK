@@ -2,7 +2,6 @@ from datetime import timedelta
 from typing import Annotated
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from fastapi.security import OAuth2PasswordRequestForm
 from prisma import Prisma, errors
 
 from app.database import get_db
@@ -22,9 +21,16 @@ from app.limiter import limiter
 from app.core import endpoints
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix=endpoints.AUTH_PREFIX, tags=["Authentication"])
+router = APIRouter(prefix=endpoints.AUTH_PREFIX, tags=["Autenticación"])
 
-@router.post(endpoints.AUTH_REGISTER, response_model=UserOut, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_manage_users)])
+@router.post(
+    endpoints.AUTH_REGISTER, 
+    response_model=UserOut, 
+    status_code=status.HTTP_201_CREATED, 
+    dependencies=[Depends(require_manage_users)],
+    summary="Registrar Usuario",
+    description="Crea una nueva cuenta de usuario. Requiere permisos de gestión de usuarios (ADMIN o Gerencia)."
+)
 @limiter.limit("5/minute")
 async def register(request: Request, user_in: UserCreate, db: Annotated[Prisma, Depends(get_db)]):
     try:
@@ -54,10 +60,18 @@ async def register(request: Request, user_in: UserCreate, db: Annotated[Prisma, 
         logger.error(f"Registration error: {e}")
         raise HTTPException(status_code=500, detail="Error en servidor")
 
-@router.post(endpoints.AUTH_LOGIN, response_model=Token)
+@router.post(
+    endpoints.AUTH_LOGIN, 
+    response_model=Token,
+    summary="Iniciar Sesión",
+    description="Autentica al usuario y devuelve un token JWT. Soporta formato JSON."
+)
 @limiter.limit("10/minute")
 async def login(request: Request, login_data: UserLogin, db: Annotated[Prisma, Depends(get_db)]):
-    user = await db.user.find_unique(where={"email": login_data.email})
+    user = await db.user.find_unique(
+        where={"email": login_data.email},
+        include={"role": True}
+    )
     if not user or not verify_password(login_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Credenciales incorrectas")
     
@@ -68,16 +82,29 @@ async def login(request: Request, login_data: UserLogin, db: Annotated[Prisma, D
     await db.user.update(where={"id": user.id}, data={"session_token": new_session_token})
 
     access_token = create_access_token(
-        data={"sub": user.id, "session_token": new_session_token},
+        data={
+            "sub": user.id, 
+            "role": user.role.name,
+            "session_token": new_session_token
+        },
         expires_delta=timedelta(minutes=settings.access_token_expire_minutes)
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
-@router.get(endpoints.AUTH_ME, response_model=UserOut)
+@router.get(
+    endpoints.AUTH_ME, 
+    response_model=UserOut,
+    summary="Obtener Perfil Actual",
+    description="Devuelve la información del usuario autenticado basado en el token JWT."
+)
 async def get_me(current_user: Annotated[UserOut, Depends(get_current_user)]):
     return current_user
 
-@router.post(endpoints.AUTH_RECOVERY)
+@router.post(
+    endpoints.AUTH_RECOVERY,
+    summary="Recuperar Contraseña",
+    description="Envía un correo electrónico con un enlace de recuperación si el usuario existe."
+)
 @limiter.limit("3/minute")
 async def recover_password(request: Request, data: PasswordResetRequest, db: Annotated[Prisma, Depends(get_db)]):
     user = await db.user.find_unique(where={"email": data.email})
@@ -86,7 +113,11 @@ async def recover_password(request: Request, data: PasswordResetRequest, db: Ann
         send_password_reset_email(data.email, token)
     return {"message": "Si existe, se envió correo"}
 
-@router.post(endpoints.AUTH_RESET)
+@router.post(
+    endpoints.AUTH_RESET,
+    summary="Restablecer Contraseña",
+    description="Cambia la contraseña del usuario utilizando un token de recuperación válido."
+)
 async def reset_password(data: PasswordResetConfirm, db: Annotated[Prisma, Depends(get_db)]):
     email = verify_password_reset_token(data.token)
     if not email:

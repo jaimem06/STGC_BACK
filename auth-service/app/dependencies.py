@@ -38,9 +38,10 @@ async def get_current_user(
     if not user_id or not session_token:
         raise credentials_exception
 
+    # Removemos el include de permissions porque ya no existe
     user = await db.user.find_unique(
         where={"id": user_id},
-        include={"role": {"include": {"permissions": True}}}
+        include={"role": True}
     )
 
     if user is None or user.session_token != session_token:
@@ -77,29 +78,27 @@ async def get_current_active_user(
     
     return current_user
 
-class PermissionChecker:
-    def __init__(self, required_permissions: list[str]):
-        self.required_permissions = required_permissions
+class RoleChecker:
+    def __init__(self, allowed_roles: list[str]):
+        self.allowed_roles = allowed_roles
 
     def __call__(
         self,
         current_user: Annotated[User, Depends(get_current_active_user)],
     ) -> User:
-        user_permissions = [p.name for p in current_user.role.permissions]
-
-        if "all_access" in user_permissions:
+        if current_user.role.name == "ADMIN":
             return current_user
 
-        for perm in self.required_permissions:
-            if perm not in user_permissions:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Falta permiso: {perm}",
-                )
+        if current_user.role.name not in self.allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"No tienes el rol necesario para esta acción. Requerido: {', '.join(self.allowed_roles)}",
+            )
         return current_user
 
-require_all_access = PermissionChecker(["all_access"])
-require_manage_users = PermissionChecker(["manage_users"])
+# Dependencias de roles comunes
+require_all_access = RoleChecker(["ADMIN"])
+require_manage_users = RoleChecker(["ADMIN", "GERENTE_GENERAL", "GERENTE_OPERACIONES"])
 
 async def _record_audit_log(db: Prisma, user_id: str, action: str, endpoint: str, ip_address: str):
     try:

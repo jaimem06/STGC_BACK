@@ -2,23 +2,29 @@ from typing import List, Annotated, Optional
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from prisma import Prisma, errors
+from pydantic import BaseModel, EmailStr
 
 from app.database import get_db
 from app.dependencies import require_manage_users, log_user_action
 from app.schemas.user import UserOut, UserStatus
 from app.core import endpoints
-from pydantic import BaseModel
+from app.security import get_password_hash
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix=endpoints.USERS_PREFIX, tags=["User Management"])
+router = APIRouter(prefix=endpoints.USERS_PREFIX, tags=["Gestión de Usuarios"])
 
 class UserUpdate(BaseModel):
     role_name: Optional[str] = None
     status: Optional[UserStatus] = None
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    password: Optional[str] = None
 
 @router.get(
     endpoints.USERS_LIST, 
     response_model=List[UserOut],
+    summary="Listar Usuarios",
+    description="Devuelve la lista completa de empleados con su rol y estado. Solo accesible por gestores.",
     responses={
         403: {"description": "Permisos insuficientes"},
         500: {"description": "Error interno"}
@@ -30,7 +36,7 @@ async def list_users(
 ):
     """Lista todos los usuarios con sus roles (Solo gestores de usuarios)."""
     try:
-        return await db.user.find_many(include={"role": {"include": {"permissions": True}}})
+        return await db.user.find_many(include={"role": True})
     except Exception as e:
         logger.error(f"Error al listar usuarios: {str(e)}")
         raise HTTPException(status_code=500, detail="Error al recuperar la lista de usuarios")
@@ -38,6 +44,8 @@ async def list_users(
 @router.patch(
     endpoints.USERS_UPDATE, 
     response_model=UserOut,
+    summary="Actualizar Usuario",
+    description="Modifica los datos de un empleado (email, teléfono, rol, estado o contraseña).",
     responses={
         400: {"description": "Datos de actualización inválidos"},
         404: {"description": "Usuario no encontrado"},
@@ -51,7 +59,7 @@ async def update_user(
     _ = Depends(require_manage_users),
     __ = Depends(log_user_action("update_user"))
 ):
-    """Actualiza el rol o el estado de un usuario existente (Solo gestores de usuarios)."""
+    """Actualiza el rol, estado, email, teléfono o contraseña de un usuario existente."""
     try:
         # 1. Verificar que el usuario existe
         user = await db.user.find_unique(where={"id": user_id})
@@ -60,16 +68,33 @@ async def update_user(
 
         update_data = {}
         
-        # 2. Validar rol si se proporciona
+        # 2. Validar y preparar datos de actualización
         if user_update.role_name:
             role = await db.role.find_unique(where={"name": user_update.role_name})
             if not role:
                 raise HTTPException(status_code=400, detail=f"El rol '{user_update.role_name}' no existe")
             update_data["role_id"] = role.id
         
-        # 3. Validar estado si se proporciona
         if user_update.status:
             update_data["status"] = user_update.status
+
+        if user_update.email:
+            # Verificar que el email no esté en uso por otro usuario
+            existing_email = await db.user.find_first(
+                where={
+                    "email": user_update.email,
+                    "NOT": {"id": user_id}
+                }
+            )
+            if existing_email:
+                raise HTTPException(status_code=400, detail="El email ya está en uso por otro usuario")
+            update_data["email"] = user_update.email
+
+        if user_update.phone_number is not None:
+            update_data["phone_number"] = user_update.phone_number
+
+        if user_update.password:
+            update_data["password_hash"] = get_password_hash(user_update.password)
 
         if not update_data:
             raise HTTPException(status_code=400, detail="No se proporcionaron datos válidos para actualizar")
@@ -78,7 +103,7 @@ async def update_user(
         return await db.user.update(
             where={"id": user_id},
             data=update_data,
-            include={"role": {"include": {"permissions": True}}}
+            include={"role": True}
         )
 
     except HTTPException:
