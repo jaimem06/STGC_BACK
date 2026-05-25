@@ -4,6 +4,18 @@ use uuid::Uuid;
 use chrono::{DateTime, Utc};
 use super::enums::{EstadoProducto, TipoElemento, UnidadMedida, TipoMovimiento};
 
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateInventarioItem {
+    pub sku: String,
+    pub nombre: String,
+    pub tipo: TipoElemento,
+    pub estado: EstadoProducto,
+    pub unidad_medida: UnidadMedida,
+    pub precio: f64,
+    pub descripcion: Option<String>,
+    pub fecha_caducidad: Option<DateTime<Utc>>,
+}
+
 #[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
 pub struct InventarioItem {
     pub id: Uuid,

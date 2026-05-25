@@ -14,6 +14,7 @@ use crate::models::*;
     paths(
         inventory_handler::list_items,
         inventory_handler::get_item,
+        inventory_handler::create_item,
         inventory_handler::create_movement,
         traceability_handler::list_lots,
         traceability_handler::transition_lot_phase,
@@ -21,7 +22,7 @@ use crate::models::*;
     ),
     components(
         schemas(
-            InventarioItem, MovimientoStock, Proveedor, LoteCafe,
+            InventarioItem, CreateInventarioItem, MovimientoStock, Proveedor, LoteCafe,
             EstadoProducto, TipoElemento, UnidadMedida, CalidadCafe,
             ClasificacionInsumo, FaseCafe, TipoMovimiento
         )
@@ -43,6 +44,7 @@ pub struct ApiDoc;
 pub fn create_router(pool: PgPool) -> Router {
     let inventory_routes = Router::new()
         .route("/", get(inventory_handler::list_items))
+        .route("/", post(inventory_handler::create_item))
         .route("/{id}", get(inventory_handler::get_item))
         .route("/movimientos", post(inventory_handler::create_movement));
 
@@ -51,10 +53,15 @@ pub fn create_router(pool: PgPool) -> Router {
         .route("/lotes/{id}/transicion", post(traceability_handler::transition_lot_phase))
         .route("/historial/{codigo_trazabilidad}", get(traceability_handler::get_traceability_history));
 
-    Router::new()
+    // Agrupamos las rutas que requieren autenticación
+    let api_routes = Router::new()
         .nest("/inventario", inventory_routes)
         .nest("/trazabilidad", traceability_routes)
+        .layer(axum::middleware::from_fn(crate::middleware::auth::auth_middleware));
+
+    // El router principal une las rutas protegidas con las públicas (documentación)
+    Router::new()
+        .merge(api_routes)
         .merge(Redoc::with_url("/docs", ApiDoc::openapi()))
-        .layer(axum::middleware::from_fn(crate::middleware::auth::auth_middleware))
         .with_state(pool)
 }

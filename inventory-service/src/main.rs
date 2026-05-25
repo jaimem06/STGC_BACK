@@ -31,6 +31,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("No se pudo conectar a la base de datos");
 
+    // Ejecutar migraciones de base de datos automáticamente al inicio
+    tracing::info!("Ejecutando migraciones de base de datos...");
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .expect("Fallo al ejecutar las migraciones de base de datos");
+    tracing::info!("Migraciones completadas exitosamente.");
+
     // Crear el router
     let app = routes::create_router(pool);
 
