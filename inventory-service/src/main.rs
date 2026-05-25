@@ -43,8 +43,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = routes::create_router(pool);
 
     // Iniciar el servidor
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3001));
-    tracing::debug!("Escuchando en {}", addr);
+    let port = env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(3001);
+    
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    tracing::info!("Servidor escuchando en http://{}", addr);
     
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
