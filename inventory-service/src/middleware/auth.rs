@@ -10,9 +10,10 @@ use std::env;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub user_id: String,
+    pub sub: String,
     pub role: String,
     pub exp: usize,
+    pub session_token: String,
 }
 
 pub async fn auth_middleware(
@@ -43,9 +44,12 @@ pub async fn auth_middleware(
         &DecodingKey::from_secret(jwt_secret.as_bytes()),
         &Validation::new(Algorithm::HS256),
     )
-    .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    .map_err(|e| {
+        tracing::error!("Error decodificando token: {}", e);
+        StatusCode::UNAUTHORIZED
+    })?;
 
-    req.extensions_mut().insert(token_data.claims.user_id);
+    req.extensions_mut().insert(token_data.claims.sub);
     
     Ok(next.run(req).await)
 }
