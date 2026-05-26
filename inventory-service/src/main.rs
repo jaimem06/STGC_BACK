@@ -42,6 +42,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Crear el router
     let app = routes::create_router(pool);
 
+    // Configurar CORS
+    let origins = env::var("ALLOWED_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:3000,https://stgc-web.onrender.com".to_string());
+    
+    let mut cors = tower_http::cors::CorsLayer::new();
+    
+    if origins == "*" {
+        cors = cors.allow_origin(tower_http::cors::Any);
+    } else {
+        let allowed_origins: Vec<axum::http::HeaderValue> = origins
+            .split(',')
+            .map(|s| s.trim().parse().unwrap())
+            .collect();
+        cors = cors.allow_origin(allowed_origins);
+    }
+
+    let cors = cors
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+        ]);
+
+    let app = app.layer(cors);
+
     // Iniciar el servidor
     let port = env::var("PORT")
         .ok()
