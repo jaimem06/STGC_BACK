@@ -85,6 +85,21 @@ pub async fn create_item(
     Extension(user_id): Extension<String>,
     Json(payload): Json<CreateInventarioItem>,
 ) -> Result<(StatusCode, Json<InventarioItem>), StatusCode> {
+    // Verificar si el nombre ya existe para asegurar que sea único
+    let nombre_existe: Option<i64> = sqlx::query_scalar("SELECT 1 FROM inventario_items WHERE nombre = $1")
+        .bind(&payload.nombre)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Error al verificar nombre: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    if nombre_existe.is_some() {
+        tracing::error!("El nombre del producto ya existe: {}", payload.nombre);
+        return Err(StatusCode::CONFLICT);
+    }
+
     let id = Uuid::new_v4();
     
     let item = sqlx::query_as::<_, InventarioItem>(
@@ -151,7 +166,7 @@ pub async fn create_movement(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
 
-    // 2. Calcular nueva cantidad
+    // 2. Calcular nueva cantidad y determinar nuevo estado dinámico
     let nueva_cantidad = match payload.tipo {
         crate::models::enums::TipoMovimiento::ENTRADA => item.cantidad + payload.cantidad,
         crate::models::enums::TipoMovimiento::SALIDA => {
@@ -162,9 +177,18 @@ pub async fn create_movement(
         }
     };
 
-    // 3. Actualizar inventario
-    sqlx::query("UPDATE inventario_items SET cantidad = $1 WHERE id = $2")
+    let nuevo_estado = if nueva_cantidad <= 0.0 {
+        crate::models::enums::EstadoProducto::AGOTADO
+    } else if nueva_cantidad < 10.0 {
+        crate::models::enums::EstadoProducto::STOCK_BAJO
+    } else {
+        crate::models::enums::EstadoProducto::DISPONIBLE
+    };
+
+    // 3. Actualizar inventario (cantidad y estado)
+    sqlx::query("UPDATE inventario_items SET cantidad = $1, estado = $2 WHERE id = $3")
         .bind(nueva_cantidad)
+        .bind(nuevo_estado)
         .bind(payload.item_id)
         .execute(&mut *tx)
         .await
