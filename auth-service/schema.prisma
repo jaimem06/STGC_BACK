@@ -31,7 +31,7 @@ model User {
   first_name      String?
   last_name       String?
   identifier      String?    @unique
-  phone_number    String?
+  phone_number    String?    @unique
   password_hash   String
   role_id         String
   role            Role       @relation(fields: [role_id], references: [id])

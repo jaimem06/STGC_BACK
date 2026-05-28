@@ -34,9 +34,20 @@ router = APIRouter(prefix=endpoints.AUTH_PREFIX, tags=["Autenticación"])
 @limiter.limit("5/minute")
 async def register(request: Request, user_in: UserCreate, db: Annotated[Prisma, Depends(get_db)]):
     try:
+        # 1. Verificar Email
         user_exists = await db.user.find_unique(where={"email": user_in.email})
         if user_exists:
-            raise HTTPException(status_code=400, detail="Email ya registrado")
+            raise HTTPException(status_code=400, detail="El email ya está registrado")
+        
+        if user_in.identifier:
+            id_exists = await db.user.find_unique(where={"identifier": user_in.identifier})
+            if id_exists:
+                raise HTTPException(status_code=400, detail="El identificador (cédula/ID) ya está en uso")
+
+        if user_in.phone_number:
+            phone_exists = await db.user.find_unique(where={"phone_number": user_in.phone_number})
+            if phone_exists:
+                raise HTTPException(status_code=400, detail="El número de teléfono ya está registrado")
         
         role = await db.role.find_unique(where={"name": user_in.role_name})
         if not role:
@@ -58,7 +69,7 @@ async def register(request: Request, user_in: UserCreate, db: Annotated[Prisma, 
     except HTTPException: raise
     except Exception as e:
         logger.error(f"Registration error: {e}")
-        raise HTTPException(status_code=500, detail="Error en servidor")
+        raise HTTPException(status_code=500, detail="Error interno en servidor")
 
 @router.post(
     endpoints.AUTH_LOGIN, 

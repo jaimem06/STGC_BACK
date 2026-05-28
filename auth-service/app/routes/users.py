@@ -18,6 +18,7 @@ class UserUpdate(BaseModel):
     status: Optional[UserStatus] = None
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
+    identifier: Optional[str] = None
     password: Optional[str] = None
 
 @router.get(
@@ -45,7 +46,7 @@ async def list_users(
     endpoints.USERS_UPDATE, 
     response_model=UserOut,
     summary="Actualizar Usuario",
-    description="Modifica los datos de un empleado (email, teléfono, rol, estado o contraseña).",
+    description="Modifica los datos de un empleado (email, teléfono, identificación, rol, estado o contraseña).",
     responses={
         400: {"description": "Datos de actualización inválidos"},
         404: {"description": "Usuario no encontrado"},
@@ -59,7 +60,7 @@ async def update_user(
     _ = Depends(require_manage_users),
     __ = Depends(log_user_action("update_user"))
 ):
-    """Actualiza el rol, estado, email, teléfono o contraseña de un usuario existente."""
+    """Actualiza el rol, estado, email, teléfono, identificación o contraseña de un usuario existente."""
     try:
         # 1. Verificar que el usuario existe
         user = await db.user.find_unique(where={"id": user_id})
@@ -90,8 +91,27 @@ async def update_user(
                 raise HTTPException(status_code=400, detail="El email ya está en uso por otro usuario")
             update_data["email"] = user_update.email
 
-        if user_update.phone_number is not None:
+        if user_update.phone_number:
+            existing_phone = await db.user.find_first(
+                where={
+                    "phone_number": user_update.phone_number,
+                    "NOT": {"id": user_id}
+                }
+            )
+            if existing_phone:
+                raise HTTPException(status_code=400, detail="El número de teléfono ya está en uso por otro usuario")
             update_data["phone_number"] = user_update.phone_number
+
+        if user_update.identifier:
+            existing_id = await db.user.find_first(
+                where={
+                    "identifier": user_update.identifier,
+                    "NOT": {"id": user_id}
+                }
+            )
+            if existing_id:
+                raise HTTPException(status_code=400, detail="El identificador (cédula/ID) ya está en uso por otro usuario")
+            update_data["identifier"] = user_update.identifier
 
         if user_update.password:
             update_data["password_hash"] = get_password_hash(user_update.password)

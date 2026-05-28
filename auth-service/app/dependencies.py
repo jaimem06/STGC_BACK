@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from typing import Annotated, Callable
+import logging
 from fastapi import Depends, HTTPException, Request, status, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 from prisma import Prisma
@@ -10,6 +11,7 @@ from app.database import get_db
 from app.config import settings
 from app.core import endpoints
 
+logger = logging.getLogger("auth-service.dependencies")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_prefix}{endpoints.AUTH_PREFIX}{endpoints.AUTH_LOGIN}")
 
 def get_client_ip(request: Request) -> str:
@@ -30,24 +32,32 @@ async def get_current_user(
 
     payload = decode_access_token(token)
     if payload is None:
+        logger.warning("Fallo al decodificar token JWT")
         raise credentials_exception
 
     user_id: str = payload.get("sub")
     session_token: str = payload.get("session_token")
 
-    if not user_id or not session_token:
+    if not user_id:
+        logger.warning("Token JWT no contiene 'sub' (user_id)")
         raise credentials_exception
 
-    # Removemos el include de permissions porque ya no existe
     user = await db.user.find_unique(
         where={"id": user_id},
         include={"role": True}
     )
 
-    if user is None or user.session_token != session_token:
+    if user is None:
+        logger.warning(f"Usuario {user_id} no encontrado en la base de datos")
+        raise credentials_exception
+
+    # Validación de sesión única (si el token de sesión no coincide, la sesión fue invalidada por otro login)
+    # Solo validamos si ambos existen para evitar expulsar usuarios con tokens antiguos o tras migraciones
+    if session_token and user.session_token and user.session_token != session_token:
+        logger.warning(f"Sesión invalidada para usuario {user.email}. DB: {user.session_token} vs JWT: {session_token}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Sesión inválida o cuenta no encontrada",
+            detail="SESSION_INVALIDATED",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -64,6 +74,7 @@ async def get_current_active_user(
         susp_until = current_user.suspended_until.replace(tzinfo=timezone.utc) if current_user.suspended_until.tzinfo is None else current_user.suspended_until
 
         if susp_from <= now <= susp_until:
+            logger.info(f"Intento de acceso de usuario suspendido: {current_user.email}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Cuenta suspendida hasta {susp_until.strftime('%Y-%m-%d %H:%M:%S')} UTC",
@@ -71,6 +82,7 @@ async def get_current_active_user(
 
     # 2. Verificar estado
     if current_user.status != "ACTIVO":
+        logger.info(f"Intento de acceso de usuario con estado {current_user.status}: {current_user.email}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Acceso denegado: {current_user.status}",
@@ -86,10 +98,12 @@ class RoleChecker:
         self,
         current_user: Annotated[User, Depends(get_current_active_user)],
     ) -> User:
+        # El ADMIN siempre tiene acceso a todo
         if current_user.role.name == "ADMIN":
             return current_user
 
         if current_user.role.name not in self.allowed_roles:
+            logger.warning(f"Usuario {current_user.email} con rol {current_user.role.name} intentó acceder a recurso que requiere {self.allowed_roles}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"No tienes el rol necesario para esta acción. Requerido: {', '.join(self.allowed_roles)}",
@@ -110,8 +124,8 @@ async def _record_audit_log(db: Prisma, user_id: str, action: str, endpoint: str
                 "ip_address": ip_address,
             }
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Error al registrar auditoría: {e}")
 
 def log_user_action(action: str) -> Callable:
     async def _log_action_dependency(
