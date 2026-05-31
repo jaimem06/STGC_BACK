@@ -73,18 +73,25 @@ def decode_access_token(token: str) -> Optional[dict[str, Any]]:
         return None
 
 
-def create_password_reset_token(email: str) -> str:
+def create_password_reset_token(email: str, password_hash: str) -> str:
     """
     Genera un token JWT para recuperación de contraseña (10 min).
+    Incluye un fragmento del hash actual para invalidar el token si la contraseña cambia.
     """
     expire = datetime.now(timezone.utc) + timedelta(minutes=10)
-    to_encode = {"exp": expire, "sub": email, "purpose": "reset_password"}
+    to_encode = {
+        "exp": expire, 
+        "sub": email, 
+        "purpose": "reset_password",
+        "pwh": password_hash[-10:]  # Últimos 10 caracteres del hash
+    }
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
 
 
-def verify_password_reset_token(token: str) -> Optional[str]:
+def verify_password_reset_token(token: str, current_password_hash: str) -> Optional[str]:
     """
-    Verifica el token de recuperación y devuelve el email si es válido.
+    Verifica el token de recuperación, valida que el propósito sea correcto
+    y que el hash de la contraseña no haya cambiado.
     """
     try:
         payload = jwt.decode(
@@ -92,6 +99,23 @@ def verify_password_reset_token(token: str) -> Optional[str]:
         )
         if payload.get("purpose") != "reset_password":
             return None
+        
+        # Verificar que el hash del token coincida con el hash actual
+        if payload.get("pwh") != current_password_hash[-10:]:
+            return None
+            
         return payload.get("sub")
     except JWTError:
+        return None
+
+
+def get_email_from_token_unverified(token: str) -> Optional[str]:
+    """
+    Extrae el email del token sin verificarlo.
+    Útil para obtener el usuario y luego verificar el token con su hash actual.
+    """
+    try:
+        payload = jwt.get_unverified_claims(token)
+        return payload.get("sub")
+    except Exception:
         return None

@@ -28,7 +28,7 @@ def send_email(
     message.attach(part)
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as server:
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
             if settings.smtp_tls:
                 server.starttls()
             server.login(settings.smtp_user, settings.smtp_password)

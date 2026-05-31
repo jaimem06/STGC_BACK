@@ -1,7 +1,7 @@
 from datetime import timedelta
 from typing import Annotated
 import logging
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
 from prisma import Prisma, errors
 
 from app.database import get_db
@@ -14,6 +14,7 @@ from app.security import (
     generate_session_token,
     create_password_reset_token,
     verify_password_reset_token,
+    get_email_from_token_unverified,
 )
 from app.utils.email import send_password_reset_email
 from app.config import settings
@@ -117,25 +118,42 @@ async def get_me(current_user: Annotated[UserOut, Depends(get_current_user)]):
     description="Envía un correo electrónico con un enlace de recuperación si el usuario existe."
 )
 @limiter.limit("3/minute")
-async def recover_password(request: Request, data: PasswordResetRequest, db: Annotated[Prisma, Depends(get_db)]):
+async def recover_password(
+    request: Request, 
+    data: PasswordResetRequest, 
+    db: Annotated[Prisma, Depends(get_db)],
+    background_tasks: BackgroundTasks
+):
     user = await db.user.find_unique(where={"email": data.email})
     if user:
-        token = create_password_reset_token(data.email)
-        send_password_reset_email(data.email, token)
-    return {"message": "Si existe, se envió correo"}
+        token = create_password_reset_token(data.email, user.password_hash)
+        background_tasks.add_task(send_password_reset_email, data.email, token)
+    return {"message": "En caso de que el email exista, se ha enviado un enlace de recuperación"}
 
 @router.post(
     endpoints.AUTH_RESET,
     summary="Restablecer Contraseña",
-    description="Cambia la contraseña del usuario utilizando un token de recuperación válido."
+    description="Cambia la contraseña utilizando un token de recuperación válido."
 )
 async def reset_password(data: PasswordResetConfirm, db: Annotated[Prisma, Depends(get_db)]):
-    email = verify_password_reset_token(data.token)
+    email = get_email_from_token_unverified(data.token)
     if not email:
         raise HTTPException(status_code=400, detail="Token inválido")
-    
+
+    user = await db.user.find_unique(where={"email": email})
+    if not user:
+        raise HTTPException(status_code=400, detail="Usuario no encontrado")
+
+    verified_email = verify_password_reset_token(data.token, user.password_hash)
+    if not verified_email:
+        raise HTTPException(status_code=400, detail="Token inválido o ya utilizado")
+
     await db.user.update(
         where={"email": email},
-        data={"password_hash": get_password_hash(data.new_password), "session_token": generate_session_token()}
+        data={
+            "password_hash": get_password_hash(data.new_password), 
+            "session_token": generate_session_token()
+        }
     )
-    return {"message": "Contraseña actualizada"}
+    return {"message": "Contraseña actualizada exitosamente"}
+
