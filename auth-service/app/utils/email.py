@@ -2,10 +2,17 @@ import smtplib
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from typing import List
+from typing import List, Optional
+import re
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+def clean_html(raw_html: str) -> str:
+    """Extrae texto plano de HTML de forma básica."""
+    cleanr = re.compile('<.*?>')
+    cleantext = re.sub(cleanr, '', raw_html)
+    return cleantext
 
 def send_email(
     recipient_email: str,
@@ -14,6 +21,7 @@ def send_email(
 ):
     """
     Envía un correo electrónico utilizando la configuración SMTP.
+    Soporta TLS (587) y SSL (465).
     """
     if not settings.smtp_user or not settings.smtp_password:
         logger.warning("SMTP no configurado. El correo no será enviado.")
@@ -21,20 +29,31 @@ def send_email(
 
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    message["From"] = settings.smtp_from_email or settings.smtp_user
+    # Priorizar smtp_from_email si existe, de lo contrario usar smtp_user
+    from_email = settings.smtp_from_email or settings.smtp_user
+    message["From"] = from_email
     message["To"] = recipient_email
 
-    part = MIMEText(body_html, "html")
-    message.attach(part)
+    # Versión en texto plano para mejor entregabilidad
+    text_content = clean_html(body_html)
+    message.attach(MIMEText(text_content, "plain"))
+    message.attach(MIMEText(body_html, "html"))
 
     try:
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=10) as server:
-            if settings.smtp_tls:
+        # Decidir entre SMTP estándar (con STARTTLS) o SMTP_SSL
+        if settings.smtp_port == 465:
+            server_class = smtplib.SMTP_SSL
+        else:
+            server_class = smtplib.SMTP
+
+        with server_class(settings.smtp_host, settings.smtp_port, timeout=10) as server:
+            server.ehlo()
+            if settings.smtp_port != 465 and settings.smtp_tls:
                 server.starttls()
+                server.ehlo()
+            
             server.login(settings.smtp_user, settings.smtp_password)
-            server.sendmail(
-                message["From"], recipient_email, message.as_string()
-            )
+            server.send_message(message)
             logger.info(f"Correo enviado exitosamente a {recipient_email}")
     except Exception as e:
         logger.error(f"Error al enviar correo a {recipient_email}: {str(e)}")

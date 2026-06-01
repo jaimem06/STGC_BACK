@@ -35,8 +35,11 @@ router = APIRouter(prefix=endpoints.AUTH_PREFIX, tags=["Autenticación"])
 @limiter.limit("5/minute")
 async def register(request: Request, user_in: UserCreate, db: Annotated[Prisma, Depends(get_db)]):
     try:
+        # Normalizar email
+        email_lower = user_in.email.lower()
+        
         # 1. Verificar Email
-        user_exists = await db.user.find_unique(where={"email": user_in.email})
+        user_exists = await db.user.find_unique(where={"email": email_lower})
         if user_exists:
             raise HTTPException(status_code=400, detail="El email ya está registrado")
         
@@ -56,7 +59,7 @@ async def register(request: Request, user_in: UserCreate, db: Annotated[Prisma, 
         
         return await db.user.create(
             data={
-                "email": user_in.email,
+                "email": email_lower,
                 "first_name": user_in.first_name,
                 "last_name": user_in.last_name,
                 "identifier": user_in.identifier,
@@ -80,8 +83,9 @@ async def register(request: Request, user_in: UserCreate, db: Annotated[Prisma, 
 )
 @limiter.limit("10/minute")
 async def login(request: Request, login_data: UserLogin, db: Annotated[Prisma, Depends(get_db)]):
+    email_lower = login_data.email.lower()
     user = await db.user.find_unique(
-        where={"email": login_data.email},
+        where={"email": email_lower},
         include={"role": True}
     )
     if not user or not verify_password(login_data.password, user.password_hash):
@@ -124,10 +128,11 @@ async def recover_password(
     db: Annotated[Prisma, Depends(get_db)],
     background_tasks: BackgroundTasks
 ):
-    user = await db.user.find_unique(where={"email": data.email})
+    email_lower = data.email.lower()
+    user = await db.user.find_unique(where={"email": email_lower})
     if user:
-        token = create_password_reset_token(data.email, user.password_hash)
-        background_tasks.add_task(send_password_reset_email, data.email, token)
+        token = create_password_reset_token(email_lower, user.password_hash)
+        background_tasks.add_task(send_password_reset_email, email_lower, token)
     return {"message": "En caso de que el email exista, se ha enviado un enlace de recuperación"}
 
 @router.post(
