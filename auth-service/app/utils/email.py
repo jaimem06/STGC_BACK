@@ -29,7 +29,6 @@ def send_email(
 
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    # Priorizar smtp_from_email si existe, de lo contrario usar smtp_user
     from_email = settings.smtp_from_email or settings.smtp_user
     message["From"] = from_email
     message["To"] = recipient_email
@@ -55,6 +54,8 @@ def send_email(
             server.login(settings.smtp_user, settings.smtp_password)
             server.send_message(message)
             logger.info(f"Correo enviado exitosamente a {recipient_email}")
+    except smtplib.SMTPAuthenticationError:
+        logger.error(f"Error de autenticación SMTP para {settings.smtp_user}. Verifique la contraseña de aplicación.")
     except Exception as e:
         logger.error(f"Error al enviar correo a {recipient_email}: {str(e)}")
 
