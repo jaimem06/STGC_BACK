@@ -1,6 +1,6 @@
 generator client {
   provider             = "prisma-client-py"
-  recursive_type_depth = 5
+  recursive_type_depth = "5"
 }
 
 datasource db {
@@ -8,18 +8,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserStatus {
-  ACTIVO
-  INACTIVO
-  SUSPENDIDO
-  PENDIENTE
-}
+// --- MODELOS PRODUCCIÓN (AUTENTICACIÓN + INVENTARIO) ---
 
 model Role {
-  id          String       @id @default(uuid())
-  name        String       @unique
+  id          String   @id @default(uuid())
+  name        String   @unique
   description String?
-  created_at  DateTime     @default(now())
+  created_at  DateTime @default(now())
   users       User[]
 
   @@map("roles")
@@ -34,12 +29,12 @@ model User {
   phone_number    String?    @unique
   password_hash   String
   role_id         String
-  role            Role       @relation(fields: [role_id], references: [id])
   status          UserStatus @default(ACTIVO)
   suspended_from  DateTime?
   suspended_until DateTime?
   session_token   String?    @unique
   audit_logs      AuditLog[]
+  role            Role       @relation(fields: [role_id], references: [id])
 
   @@map("users")
 }
@@ -47,11 +42,248 @@ model User {
 model AuditLog {
   id         String   @id @default(uuid())
   user_id    String
-  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
   action     String
   endpoint   String?
   ip_address String?
   created_at DateTime @default(now())
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
   @@map("audit_logs")
+}
+
+model sqlx_migrations {
+  version        BigInt   @id
+  description    String
+  installed_on   DateTime @default(now()) @db.Timestamptz(6)
+  success        Boolean
+  checksum       Bytes
+  execution_time BigInt
+
+  @@map("_sqlx_migrations")
+}
+
+model inventario_items {
+  id                String              @id @db.Uuid
+  sku               String              @unique
+  nombre            String
+  cantidad          Float               @default(0)
+  tipo              tipo_elemento
+  estado            estado_producto
+  unidad_medida     unidad_medida
+  precio            Float               @default(0)
+  descripcion       String?
+  fecha_caducidad   DateTime?           @db.Timestamptz(6)
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  movimientos_stock movimientos_stock[]
+}
+
+model lotes_cafe {
+  id                  String              @id @db.Uuid
+  variedad            String
+  fase                fase_cafe
+  cantidad_producida  Float
+  costo_produccion    Float
+  unidad_medida       unidad_medida
+  calidad             calidad_cafe
+  codigo_trazabilidad String              @db.Uuid
+  lote_anterior_id    String?             @db.Uuid
+  fecha_creacion      DateTime            @default(now()) @db.Timestamptz(6)
+  lotes_cafe          lotes_cafe?         @relation("lotes_cafeTolotes_cafe", fields: [lote_anterior_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  other_lotes_cafe    lotes_cafe[]        @relation("lotes_cafeTolotes_cafe")
+  movimientos_stock   movimientos_stock[]
+}
+
+model movimientos_stock {
+  id               String           @id @db.Uuid
+  item_id          String           @db.Uuid
+  cantidad         Float
+  tipo             tipo_movimiento
+  fecha            DateTime         @default(now()) @db.Timestamptz(6)
+  motivo           String
+  lote_id          String?          @db.Uuid
+  inventario_items inventario_items @relation(fields: [item_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  lotes_cafe       lotes_cafe?      @relation(fields: [lote_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+}
+
+model proveedores {
+  id          String @id @db.Uuid
+  nombre      String
+  contacto    String
+  tipo_insumo String
+}
+
+// --- MODELOS APP MÓVIL (TRAZABILIDAD) ---
+
+model asignacion_personal {
+  id                 String    @id
+  lote_id            String
+  etapa              String
+  trabajador_id      String
+  tipo_grano         String?
+  pago_calculado     Float?    @db.Real
+  fecha_asignacion   DateTime? @default(now()) @db.Timestamp(6)
+  fecha_jornada      String?
+  horas_trabajadas   Float?    @db.Real
+  cantidad_cosechada Float?    @db.Real
+  is_synced          Boolean   @default(false)
+  lotes              lotes     @relation(fields: [lote_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "asignacion_personal_lote_id_lotes_id_fk")
+}
+
+model catalogo {
+  id                                           String     @id
+  categoria                                    String
+  valor                                        String
+  activo                                       Boolean    @default(true)
+  origen_local                                 Boolean    @default(false)
+  fecha_creacion                               DateTime   @default(now()) @db.Timestamp(6)
+  fecha_modificacion                           DateTime   @default(now()) @db.Timestamp(6)
+  is_synced                                    Boolean    @default(false)
+  semillas_semillas_color_idTocatalogo         semillas[] @relation("semillas_color_idTocatalogo")
+  semillas_semillas_distribuidor_idTocatalogo  semillas[] @relation("semillas_distribuidor_idTocatalogo")
+  semillas_semillas_integridad_idTocatalogo    semillas[] @relation("semillas_integridad_idTocatalogo")
+  semillas_semillas_metodo_secado_idTocatalogo semillas[] @relation("semillas_metodo_secado_idTocatalogo")
+  semillas_semillas_olor_idTocatalogo          semillas[] @relation("semillas_olor_idTocatalogo")
+  semillas_semillas_pais_origen_idTocatalogo   semillas[] @relation("semillas_pais_origen_idTocatalogo")
+  semillas_semillas_seleccion_idTocatalogo     semillas[] @relation("semillas_seleccion_idTocatalogo")
+  semillas_semillas_variedad_idTocatalogo      semillas[] @relation("semillas_variedad_idTocatalogo")
+}
+
+model estado_etapa {
+  id                 String  @id
+  lote_id            String
+  etapa              String
+  estado             String  @default("Pendiente")
+  fecha_inicio       String?
+  fecha_final        String?
+  duracion_calculada Float?  @db.Real
+  sub_fase_siembra   String?
+  is_synced          Boolean @default(false)
+  lotes              lotes   @relation(fields: [lote_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "estado_etapa_lote_id_lotes_id_fk")
+}
+
+model lotes {
+  id                    String                @id
+  codigo                String                @unique(map: "lotes_codigo_unique")
+  parcela_id            String
+  semilla_id            String
+  zona_seleccionada     String?
+  hectareas_lote        Float?                @db.Real
+  variedad_cafe         String?
+  porcentaje_progreso   Float?                @default(0) @db.Real
+  costo_total_mano_obra Float?                @default(0) @db.Real
+  estado_lote           String                @default("Creado")
+  calidad_final         String?
+  fecha_creacion        DateTime              @default(now()) @db.Timestamp(6)
+  fecha_modificacion    DateTime              @default(now()) @db.Timestamp(6)
+  is_synced             Boolean               @default(false)
+  asignacion_personal   asignacion_personal[]
+  estado_etapa          estado_etapa[]
+  parcelas              parcelas              @relation(fields: [parcela_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "lotes_parcela_id_parcelas_id_fk")
+  semillas              semillas              @relation(fields: [semilla_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "lotes_semilla_id_semillas_id_fk")
+}
+
+model parcelas {
+  id                    String   @id
+  nombre                String   @unique(map: "parcelas_nombre_unique")
+  hectareas             Float    @db.Real
+  latitud               Float?   @db.Real
+  longitud              Float?   @db.Real
+  ph_suelo              Float?   @db.Real
+  textura               String
+  altitud_msnm          Float?   @db.Real
+  cortinas_rompevientos Boolean? @default(false)
+  orientacion_ladera    String
+  tipo_terreno          String
+  tipo_zona             String?
+  estado                String   @default("Libre")
+  fecha_creacion        DateTime @default(now()) @db.Timestamp(6)
+  fecha_modificacion    DateTime @default(now()) @db.Timestamp(6)
+  is_synced             Boolean  @default(false)
+  activo                Boolean  @default(true)
+  lotes                 lotes[]
+}
+
+model semillas {
+  id                                           String    @id
+  variedad_id                                  String
+  pais_origen_id                               String?
+  distribuidor_id                              String?
+  metodo_secado_id                             String?
+  seleccion_id                                 String?
+  olor_id                                      String?
+  color_id                                     String?
+  integridad_id                                String?
+  anexo_ruta                                   String?
+  anexo_tamano                                 Int?
+  anexo_creacion                               String?
+  is_synced                                    Boolean   @default(false)
+  fecha_creacion                               DateTime  @default(now()) @db.Timestamp(6)
+  fecha_modificacion                           DateTime  @default(now()) @db.Timestamp(6)
+  activo                                       Boolean   @default(true)
+  lotes                                        lotes[]
+  catalogo_semillas_color_idTocatalogo         catalogo? @relation("semillas_color_idTocatalogo", fields: [color_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_color_id_catalogo_id_fk")
+  catalogo_semillas_distribuidor_idTocatalogo  catalogo? @relation("semillas_distribuidor_idTocatalogo", fields: [distribuidor_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_distribuidor_id_catalogo_id_fk")
+  catalogo_semillas_integridad_idTocatalogo    catalogo? @relation("semillas_integridad_idTocatalogo", fields: [integridad_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_integridad_id_catalogo_id_fk")
+  catalogo_semillas_metodo_secado_idTocatalogo catalogo? @relation("semillas_metodo_secado_idTocatalogo", fields: [metodo_secado_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_metodo_secado_id_catalogo_id_fk")
+  catalogo_semillas_olor_idTocatalogo          catalogo? @relation("semillas_olor_idTocatalogo", fields: [olor_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_olor_id_catalogo_id_fk")
+  catalogo_semillas_pais_origen_idTocatalogo   catalogo? @relation("semillas_pais_origen_idTocatalogo", fields: [pais_origen_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_pais_origen_id_catalogo_id_fk")
+  catalogo_semillas_seleccion_idTocatalogo     catalogo? @relation("semillas_seleccion_idTocatalogo", fields: [seleccion_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_seleccion_id_catalogo_id_fk")
+  catalogo_semillas_variedad_idTocatalogo      catalogo  @relation("semillas_variedad_idTocatalogo", fields: [variedad_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "semillas_variedad_id_catalogo_id_fk")
+}
+
+// --- ENUMS ---
+
+enum UserStatus {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
+  PENDIENTE
+}
+
+enum calidad_cafe {
+  ALTA
+  MEDIA
+  BAJA
+}
+
+enum clasificacion_insumo {
+  QUIMICO_FERTILIZANTE
+  QUIMICO_FUNGICIDA
+  ORGANICO
+}
+
+enum estado_producto {
+  DISPONIBLE
+  AGOTADO
+  STOCK_BAJO
+  INACTIVO
+  EN_TRANSITO
+  BLOQUEADO
+  CADUCADO
+}
+
+enum fase_cafe {
+  PULPA
+  DESPULPADO
+  SECADO
+  TOSTADO
+  MOLIDO
+}
+
+enum tipo_elemento {
+  INSUMO
+  PRODUCTO
+  CAFE_PROCESADO
+}
+
+enum tipo_movimiento {
+  ENTRADA
+  SALIDA
+}
+
+enum unidad_medida {
+  QUINTALES
+  ARROBAS
+  LIBRAS
 }

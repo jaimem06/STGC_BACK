@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def clean_html(raw_html: str) -> str:
     """Extrae texto plano de HTML de forma básica."""
-    cleanr = re.compile('<.*?>')
+    cleanr = re.compile('<.*?>', re.DOTALL)
     cleantext = re.sub(cleanr, '', raw_html)
     return cleantext
 
@@ -35,8 +35,8 @@ def send_email(
 
     # Versión en texto plano para mejor entregabilidad
     text_content = clean_html(body_html)
-    message.attach(MIMEText(text_content, "plain"))
-    message.attach(MIMEText(body_html, "html"))
+    message.attach(MIMEText(text_content, "plain", "utf-8"))
+    message.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
         # Decidir entre SMTP estándar (con STARTTLS) o SMTP_SSL
