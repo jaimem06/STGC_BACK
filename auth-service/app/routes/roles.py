@@ -37,7 +37,7 @@ async def list_roles(db: Annotated[Prisma, Depends(get_db)]):
     response_model=RoleOut, 
     status_code=status.HTTP_201_CREATED,
     summary="Crear Nuevo Rol",
-    description="Crea un nuevo rol en el sistema. Reservado para el Administrador.",
+    description="Crea un nuevo rol en el sistema. Reservado para Administradores y Gestores Autorizados.",
     responses={
         400: {"description": "El rol ya existe"},
         403: {"description": "Permisos insuficientes"},
@@ -47,10 +47,10 @@ async def list_roles(db: Annotated[Prisma, Depends(get_db)]):
 async def create_role(
     role_in: RoleCreate,
     db: Annotated[Prisma, Depends(get_db)],
-    _ = Depends(require_all_access),
+    _ = Depends(require_manage_users),
     __ = Depends(log_user_action("create_role"))
 ):
-    """Crea un nuevo rol (Solo ADMIN)."""
+    """Crea un nuevo rol (ADMIN y Gestores Autorizados)."""
     try:
         existing = await db.role.find_unique(where={"name": role_in.name})
         if existing:
@@ -82,7 +82,7 @@ async def update_role(
     role_id: str,
     role_in: RoleCreate,
     db: Annotated[Prisma, Depends(get_db)],
-    _ = Depends(require_all_access),
+    _ = Depends(require_manage_users),
     __ = Depends(log_user_action("update_role"))
 ):
     """Actualiza un rol."""
@@ -117,7 +117,7 @@ async def update_role(
 async def delete_role(
     role_id: str,
     db: Annotated[Prisma, Depends(get_db)],
-    _ = Depends(require_all_access),
+    _ = Depends(require_manage_users),
     __ = Depends(log_user_action("delete_role"))
 ):
     """Elimina un rol (Solo si no tiene usuarios)."""

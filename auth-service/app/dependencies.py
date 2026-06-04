@@ -112,7 +112,7 @@ class RoleChecker:
 
 # Dependencias de roles comunes
 require_all_access = RoleChecker(["ADMIN"])
-require_manage_users = RoleChecker(["ADMIN", "GERENTE_GENERAL", "GERENTE_OPERACIONES"])
+require_manage_users = RoleChecker(["ADMIN", "GERENTE_GENERAL", "GERENTE_OPERACIONES", "CAPATAZ"])
 
 async def _record_audit_log(db: Prisma, user_id: str, action: str, endpoint: str, ip_address: str):
     try:
