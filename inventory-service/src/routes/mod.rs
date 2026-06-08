@@ -43,7 +43,7 @@ use crate::models::*;
         )
     ),
     tags(
-        (name = "Inventario POS", description = "Operaciones de inventario específicas para la Cafetería."),
+        (name = "Inventario Modulo 2", description = "Operaciones de inventario específicas para la Cafetería."),
         (name = "Inventario Finca", description = "Operaciones de inventario para la Finca."),
         (name = "Trazabilidad", description = "Seguimiento de la cadena de valor del café.")
     ),
@@ -57,7 +57,7 @@ pub struct ApiDoc;
 
 pub fn create_router(pool: PgPool) -> Router {
     let api_routes = Router::new()
-        // --- INVENTARIO POS ---
+        // --- Inventario Modulo 2 ---
         .route("/inventario/pos", get(pos_inventory_handler::list_items))
         .route("/inventario/pos/nuevo", post(pos_inventory_handler::create_item)) // RUTA SEPARADA
         .route("/inventario/pos/movimientos", post(pos_inventory_handler::create_movement))

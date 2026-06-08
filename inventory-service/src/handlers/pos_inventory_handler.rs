@@ -34,7 +34,7 @@ fn parse_flex_date(date_str: Option<String>) -> Option<DateTime<Utc>> {
 #[utoipa::path(
     get,
     path = "/inventario/pos",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     responses((status = 200, body = [InventarioItem]))
 )]
 pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<InventarioItem>>, StatusCode> {
@@ -53,7 +53,7 @@ pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<Inventari
 #[utoipa::path(
     post,
     path = "/inventario/pos/nuevo",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     request_body = CreateInventarioItem,
     responses((status = 201, body = InventarioItem))
 )]
@@ -89,7 +89,7 @@ pub async fn create_item(
 #[utoipa::path(
     get,
     path = "/inventario/pos/{id}",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     params(("id" = Uuid, Path)),
     responses((status = 200, body = InventarioItem))
 )]
@@ -102,7 +102,7 @@ pub async fn get_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Resul
 #[utoipa::path(
     put,
     path = "/inventario/pos/{id}",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     params(("id" = Uuid, Path)),
     request_body = UpdateInventarioItem,
     responses((status = 200, body = InventarioItem))
@@ -139,7 +139,7 @@ pub async fn update_item(
 #[utoipa::path(
     patch,
     path = "/inventario/pos/{id}/estado",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     params(("id" = Uuid, Path)),
     request_body = UpdateEstadoDto,
     responses((status = 200, body = InventarioItem))
@@ -167,7 +167,7 @@ pub async fn update_status(
 #[utoipa::path(
     delete,
     path = "/inventario/pos/{id}",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     params(("id" = Uuid, Path)),
     responses((status = 204))
 )]
@@ -180,7 +180,7 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
 #[utoipa::path(
     post,
     path = "/inventario/pos/movimientos",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     request_body = MovimientoStock,
     responses((status = 201, body = MovimientoStock))
 )]
@@ -217,7 +217,7 @@ pub async fn create_movement(
 #[utoipa::path(
     get,
     path = "/inventario/pos/{id}/movimientos",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     params(("id" = Uuid, Path), MovementFilter),
     responses((status = 200, body = [MovimientoStock]))
 )]
@@ -240,7 +240,7 @@ pub async fn list_movements(
 #[utoipa::path(
     get,
     path = "/inventario/pos/movimientos/exportar",
-    tag = "Inventario POS",
+    tag = "Inventario Modulo 2",
     params(MovementFilter),
     responses((status = 200, description = "CSV"))
 )]
