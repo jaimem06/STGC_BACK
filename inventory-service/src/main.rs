@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Configurar CORS
     let origins = env::var("ALLOWED_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:3001,http://localhost:3000,https://stgc-web.onrender.com".to_string());
+        .unwrap_or_else(|_| "http://localhost:3001,http://localhost:3000,https://stgc-web.onrender.com,https://pos-service-oo47.onrender.com".to_string());
     
     let mut cors = tower_http::cors::CorsLayer::new();
     
