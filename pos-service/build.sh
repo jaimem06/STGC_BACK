@@ -11,4 +11,7 @@ npx prisma generate
 echo "Building the TypeScript code..."
 npm run build
 
+echo "Copying openapi.json to dist..."
+cp src/openapi.json dist/
+
 echo "Build completed successfully!"
