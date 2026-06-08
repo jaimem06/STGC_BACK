@@ -1,0 +1,182 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Microservicio POS (Cajero)",
+    "description": "API para la gestión de turnos, pedidos e inventario de cafetería.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api/pos",
+      "description": "Base URL"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/caja/apertura": {
+      "post": {
+        "summary": "Abrir turno de caja",
+        "tags": ["Caja"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "montoApertura": { "type": "number" }
+                },
+                "required": ["montoApertura"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Turno abierto exitosamente" }
+        }
+      }
+    },
+    "/caja/cierre": {
+      "post": {
+        "summary": "Cerrar turno de caja",
+        "tags": ["Caja"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "montoCierreFisico": { "type": "number" }
+                },
+                "required": ["montoCierreFisico"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Caja cerrada exitosamente" }
+        }
+      }
+    },
+    "/productos": {
+      "get": {
+        "summary": "Listar productos de cafetería",
+        "tags": ["Inventario"],
+        "responses": {
+          "200": { "description": "Lista de productos" }
+        }
+      }
+    },
+    "/pedidos": {
+      "post": {
+        "summary": "Crear un nuevo pedido",
+        "tags": ["Pedidos"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "cliente_nombre": { "type": "string" },
+                  "cliente_cedula": { "type": "string" },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "productoId": { "type": "string" },
+                        "nombre": { "type": "string" },
+                        "cantidad": { "type": "integer" },
+                        "precioUnitario": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Pedido creado" }
+        }
+      }
+    },
+    "/pedidos/{id}": {
+      "put": {
+        "summary": "Actualizar pedido en edición",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Pedido actualizado" }
+        }
+      }
+    },
+    "/pedidos/{id}/anular": {
+      "patch": {
+        "summary": "Anular un pedido",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Pedido anulado" }
+        }
+      }
+    },
+    "/pedidos/{id}/pagar": {
+      "post": {
+        "summary": "Procesar pago de pedido",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metodoPago": { "type": "string", "enum": ["EFECTIVO", "TARJETA_CREDITO", "TARJETA_DEBITO", "TRANSFERENCIA"] },
+                  "montoRecibido": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Pago procesado" }
+        }
+      }
+    },
+    "/pedidos/{id}/comprobante": {
+      "get": {
+        "summary": "Obtener comprobante PDF",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Archivo PDF", "content": { "application/pdf": {} } }
+        }
+      }
+    }
+  }
+}

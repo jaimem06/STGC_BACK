@@ -4,12 +4,12 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 enum EstadoTurno {
   ABIERTO
   CERRADO
+  DESCUADRADO
 }
 
 enum EstadoPedido {
@@ -21,9 +21,9 @@ enum EstadoPedido {
 
 enum MetodoPago {
   EFECTIVO
-  TARJETA
+  TARJETA_CREDITO
+  TARJETA_DEBITO
   TRANSFERENCIA
-  OTRO
 }
 
 model Turno {
@@ -31,9 +31,10 @@ model Turno {
   usuarioId       String       // ID del cajero desde auth-service
   fechaApertura   DateTime     @default(now())
   fechaCierre     DateTime?
-  montoApertura   Int          // En centavos para evitar coma flotante
-  montoCierreFisico Int?       // Lo que el cajero cuenta
-  montoCierreSistema Int?      // Lo que el sistema calcula
+  montoApertura   Float
+  montoCierreFisico Float?      // Lo que el cajero cuenta
+  montoCierreSistema Float?     // Lo que el sistema calcula
+  diferencia      Float?
   estado          EstadoTurno  @default(ABIERTO)
   pedidos         Pedido[]
   
@@ -44,13 +45,17 @@ model Pedido {
   id              String       @id @default(uuid())
   turnoId         String
   turno           Turno        @relation(fields: [turnoId], references: [id])
-  cliente         String?
+  cajero_id       String
+  cliente         String?      // Legacy field, keep for compatibility or migrate? instructions say add new ones
+  cliente_nombre  String?
+  cliente_cedula  String?
   items           PedidoItem[]
-  subtotal        Int          // En centavos
-  iva             Int          // En centavos
-  total           Int          // En centavos
+  subtotal        Float
+  iva             Float
+  total           Float
   estado          EstadoPedido @default(EN_EDICION)
   metodoPago      MetodoPago?
+  fecha_pago      DateTime?
   fechaCreacion   DateTime     @default(now())
   fechaActualizacion DateTime  @updatedAt
 
@@ -64,8 +69,8 @@ model PedidoItem {
   productoId      String   // ID del producto desde el inventario
   nombre          String
   cantidad        Int
-  precioUnitario  Int      // En centavos
-  subtotal        Int      // En centavos
+  precioUnitario  Float
+  subtotal        Float
 
   @@index([pedidoId])
 }

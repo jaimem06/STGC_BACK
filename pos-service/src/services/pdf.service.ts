@@ -22,21 +22,22 @@ export const generateTicket80mm = async (pedidoId: string, res: Response) => {
   doc.fontSize(8).text('----------------------------------', { align: 'center' });
   doc.text(`Fecha: ${pedido.fechaCreacion.toLocaleString()}`);
   doc.text(`Pedido ID: ${pedido.id.substring(0, 8)}`);
-  if (pedido.cliente) doc.text(`Cliente: ${pedido.cliente}`);
+  if (pedido.cliente_nombre) doc.text(`Cliente: ${pedido.cliente_nombre}`);
+  if (pedido.cliente_cedula) doc.text(`Cédula: ${pedido.cliente_cedula}`);
   doc.text('----------------------------------');
 
   // Items
   pedido.items.forEach(item => {
     doc.text(`${item.cantidad} x ${item.nombre.substring(0, 20)}`);
-    doc.text(`$${(item.precioUnitario / 100).toFixed(2)} -> $${(item.subtotal / 100).toFixed(2)}`, { align: 'right' });
+    doc.text(`$${item.precioUnitario.toFixed(2)} -> $${item.subtotal.toFixed(2)}`, { align: 'right' });
   });
 
   doc.text('----------------------------------');
   
   // Totales
-  doc.fontSize(10).text(`SUBTOTAL: $${(pedido.subtotal / 100).toFixed(2)}`, { align: 'right' });
-  doc.text(`IVA: $${(pedido.iva / 100).toFixed(2)}`, { align: 'right' });
-  doc.fontSize(12).text(`TOTAL: $${(pedido.total / 100).toFixed(2)}`, { align: 'right' });
+  doc.fontSize(10).text(`SUBTOTAL: $${pedido.subtotal.toFixed(2)}`, { align: 'right' });
+  doc.text(`IVA: $${pedido.iva.toFixed(2)}`, { align: 'right' });
+  doc.fontSize(12).text(`TOTAL: $${pedido.total.toFixed(2)}`, { align: 'right' });
 
   doc.text('----------------------------------', { align: 'center' });
   doc.fontSize(8).text('¡Gracias por su compra!', { align: 'center' });

@@ -23,7 +23,7 @@ export class PosController {
   static async crearPedido(req: Request, res: Response, next: NextFunction) {
     try {
       const validated = CreatePedidoSchema.parse(req.body);
-      const pedido = await PosService.crearPedido(req.user!.sub, validated);
+      const pedido = await PosService.crearPedido(req, validated);
       res.status(201).json(pedido);
     } catch (error) {
       next(error);
@@ -34,7 +34,7 @@ export class PosController {
     try {
       const { id } = req.params;
       const validated = UpdatePedidoSchema.parse(req.body);
-      const pedido = await PosService.actualizarPedido(req.user!.sub, id, validated);
+      const pedido = await PosService.actualizarPedido(req, id, validated);
       res.json(pedido);
     } catch (error) {
       next(error);
@@ -44,7 +44,7 @@ export class PosController {
   static async anularPedido(req: Request, res: Response, next: NextFunction) {
     try {
       const { id } = req.params;
-      const pedido = await PosService.anularPedido(req.user!.sub, id);
+      const pedido = await PosService.anularPedido(req, id);
       res.json(pedido);
     } catch (error) {
       next(error);
@@ -55,7 +55,7 @@ export class PosController {
     try {
       const { id } = req.params;
       const validated = PagoPedidoSchema.parse(req.body);
-      const result = await PosService.pagarPedido(req.user!.sub, id, validated);
+      const result = await PosService.pagarPedido(req, id, validated);
       res.json(result);
     } catch (error) {
       next(error);
@@ -66,7 +66,7 @@ export class PosController {
     try {
       const validated = CierreCajaSchema.parse(req.body);
       const sessionToken = req.headers.authorization!.split(' ')[1];
-      const turno = await PosService.cerrarCaja(req.user!.sub, validated.montoCierreFisico, sessionToken);
+      const turno = await PosService.cerrarCaja(req, validated.montoCierreFisico, sessionToken);
       res.json(turno);
     } catch (error) {
       next(error);
@@ -88,7 +88,7 @@ export class PosController {
     try {
       const { montoApertura } = req.body;
       if (typeof montoApertura !== 'number') throw new AppError('Monto de apertura inválido');
-      const turno = await PosService.abrirTurno(req.user!.sub, montoApertura);
+      const turno = await PosService.abrirTurno(req, montoApertura);
       res.status(201).json(turno);
     } catch (error) {
       next(error);

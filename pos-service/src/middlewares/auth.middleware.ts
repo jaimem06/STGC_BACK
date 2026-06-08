@@ -33,6 +33,11 @@ export const authMiddleware = async (
 
     const decoded = jwt.verify(token, secret) as JWTPayload;
 
+    // VALIDACIÓN ESTRICTA DE ROL (Sprint 3)
+    if (decoded.role !== 'ADMIN' && decoded.role !== 'CAJERO') {
+      throw new AppError('Prohibido - Rol insuficiente', 403);
+    }
+
     // Validar session_token contra BD
     const sessionActive = await prisma.activeSession.findUnique({
       where: { sessionToken: decoded.session_token }
