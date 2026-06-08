@@ -11,7 +11,7 @@ use serde::Deserialize;
 use chrono::{DateTime, Utc, TimeZone};
 use crate::models::{
     InventarioItem, MovimientoStock, CreateInventarioItem, UpdateInventarioItem, 
-    UpdateEstadoDto, enums::EstadoInventario
+    UpdateEstadoDto, CreateMovimientoDto, enums::EstadoInventario
 };
 use crate::utils::audit::enviar_auditoria;
 
@@ -196,7 +196,7 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
     post,
     path = "/inventario/pos/movimientos",
     tag = "Inventario Modulo 2",
-    request_body = MovimientoStock,
+    request_body = CreateMovimientoDto,
     security(
         ("bearer_auth" = [])
     ),
@@ -211,7 +211,7 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
 pub async fn create_movement(
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
-    Json(payload): Json<MovimientoStock>,
+    Json(payload): Json<CreateMovimientoDto>,
 ) -> Result<(StatusCode, Json<MovimientoStock>), StatusCode> {
     let mut tx = pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     

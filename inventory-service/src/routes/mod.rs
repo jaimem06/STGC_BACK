@@ -37,7 +37,7 @@ use crate::models::*;
     components(
         schemas(
             InventarioItem, CreateInventarioItem, UpdateInventarioItem, UpdateEstadoDto,
-            MovimientoStock, Proveedor, LoteCafe,
+            MovimientoStock, CreateMovimientoDto, Proveedor, LoteCafe,
             EstadoInventario, TipoElemento, UnidadMedida, CalidadCafe,
             ClasificacionInsumo, FaseCafe, TipoMovimiento, ModuloInventario
         )

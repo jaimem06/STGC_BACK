@@ -85,6 +85,16 @@ pub struct MovimientoStock {
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CreateMovimientoDto {
+    pub item_id: Uuid,
+    pub cantidad: f64,
+    pub tipo: TipoMovimiento,
+    pub motivo: String,
+    #[serde(default)]
+    pub lote_id: Option<Uuid>,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
 #[allow(dead_code)]
 pub struct AlertaStock {
     pub item_id: Uuid,

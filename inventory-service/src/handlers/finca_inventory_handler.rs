@@ -11,7 +11,7 @@ use serde::Deserialize;
 use chrono::{DateTime, Utc, TimeZone};
 use crate::models::{
     InventarioItem, MovimientoStock, CreateInventarioItem, UpdateInventarioItem, 
-    UpdateEstadoDto, enums::EstadoInventario
+    UpdateEstadoDto, CreateMovimientoDto, enums::EstadoInventario
 };
 use crate::utils::audit::enviar_auditoria;
 
@@ -227,7 +227,7 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
     post,
     path = "/inventario/finca/movimientos",
     tag = "Inventario Finca",
-    request_body = MovimientoStock,
+    request_body = CreateMovimientoDto,
     security(
         ("bearer_auth" = [])
     ),
@@ -244,7 +244,7 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
 pub async fn create_movement(
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
-    Json(payload): Json<MovimientoStock>,
+    Json(payload): Json<CreateMovimientoDto>,
 ) -> Result<(StatusCode, Json<MovimientoStock>), StatusCode> {
     let mut tx = pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let item = sqlx::query_as::<_, InventarioItem>("SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' FOR UPDATE")
@@ -258,8 +258,8 @@ pub async fn create_movement(
     };
     let nuevo_estado = if nueva_cantidad <= 0.0 { EstadoInventario::AGOTADO } else if nueva_cantidad <= item.stock_minimo { EstadoInventario::STOCK_BAJO } else { EstadoInventario::DISPONIBLE };
     sqlx::query("UPDATE inventario_items SET cantidad = $1, estado = $2 WHERE id = $3").bind(nueva_cantidad).bind(nuevo_estado).bind(item.id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let movimiento = sqlx::query_as::<_, MovimientoStock>("INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo) VALUES ($1, $2, $3, $4, NOW(), $5) RETURNING *")
-        .bind(Uuid::new_v4()).bind(item.id).bind(payload.cantidad).bind(&payload.tipo).bind(&payload.motivo).fetch_one(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let movimiento = sqlx::query_as::<_, MovimientoStock>("INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo, lote_id) VALUES ($1, $2, $3, $4, NOW(), $5, $6) RETURNING *")
+        .bind(Uuid::new_v4()).bind(item.id).bind(payload.cantidad).bind(&payload.tipo).bind(&payload.motivo).bind(payload.lote_id).fetch_one(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     enviar_auditoria(user_id, "FINCA_MOVEMENT".to_string(), format!("/inventario/finca/movimientos/{}", movimiento.id), "N/A".to_string());
     Ok((StatusCode::CREATED, Json(movimiento)))
