@@ -1,4 +1,5 @@
-import { Request, Response, NextFunction } from 'express';
+type Request = any;
+type Response = any;
 import { PosService } from '../services/pos.service';
 import { getInventoryCafeteria } from '../services/inventory.service';
 import { generateTicket80mm } from '../services/pdf.service';
@@ -21,14 +22,14 @@ export class PosController {
    * 403 - Rol insuficiente (Middleware)
    * 500 - Error interno
    */
-  static async getProductos(req: Request, res: Response, next: NextFunction) {
+  static async getProductos(req: Request, res: Response) {
     try {
       const token = req.headers.authorization;
       const productos = await getInventoryCafeteria(token);
       return res.status(200).json(productos);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -42,14 +43,14 @@ export class PosController {
    * 403 - Rol insuficiente (Middleware)
    * 500 - Error interno
    */
-  static async crearPedido(req: Request, res: Response, next: NextFunction) {
+  static async crearPedido(req: Request, res: Response) {
     try {
       const validated = CreatePedidoSchema.parse(req.body);
       const pedido = await PosService.crearPedido(req, validated);
       return res.status(201).json(pedido);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -63,7 +64,7 @@ export class PosController {
    * 404 - Pedido no encontrado
    * 500 - Error interno
    */
-  static async actualizarPedido(req: Request, res: Response, next: NextFunction) {
+  static async actualizarPedido(req: Request, res: Response) {
     try {
       const { id } = req.params;
       const validated = UpdatePedidoSchema.parse(req.body);
@@ -71,7 +72,7 @@ export class PosController {
       return res.status(200).json(pedido);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -85,14 +86,14 @@ export class PosController {
    * 404 - Pedido no encontrado
    * 500 - Error interno
    */
-  static async anularPedido(req: Request, res: Response, next: NextFunction) {
+  static async anularPedido(req: Request, res: Response) {
     try {
       const { id } = req.params;
       const pedido = await PosService.anularPedido(req, id);
       return res.status(200).json(pedido);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -106,7 +107,7 @@ export class PosController {
    * 404 - Pedido no encontrado
    * 500 - Error interno
    */
-  static async pagarPedido(req: Request, res: Response, next: NextFunction) {
+  static async pagarPedido(req: Request, res: Response) {
     try {
       const { id } = req.params;
       const validated = PagoPedidoSchema.parse(req.body);
@@ -114,7 +115,7 @@ export class PosController {
       return res.status(200).json(result);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -128,7 +129,7 @@ export class PosController {
    * 403 - Rol insuficiente (Middleware)
    * 500 - Error interno
    */
-  static async cerrarCaja(req: Request, res: Response, next: NextFunction) {
+  static async cerrarCaja(req: Request, res: Response) {
     try {
       const validated = CierreCajaSchema.parse(req.body);
       const sessionToken = req.headers.authorization!.split(' ')[1];
@@ -136,7 +137,7 @@ export class PosController {
       return res.status(200).json(turno);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -150,7 +151,7 @@ export class PosController {
    * 404 - Pedido no encontrado
    * 500 - Error interno
    */
-  static async getComprobante(req: Request, res: Response, next: NextFunction) {
+  static async getComprobante(req: Request, res: Response) {
     try {
       const { id } = req.params;
       res.setHeader('Content-Type', 'application/pdf');
@@ -158,7 +159,7 @@ export class PosController {
       await generateTicket80mm(id, res);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -172,7 +173,7 @@ export class PosController {
    * 403 - Rol insuficiente (Middleware)
    * 500 - Error interno
    */
-  static async abrirTurno(req: Request, res: Response, next: NextFunction) {
+  static async abrirTurno(req: Request, res: Response) {
     try {
       const { montoApertura } = req.body;
       if (typeof montoApertura !== 'number') throw new AppError('Monto de apertura inválido', 400);
@@ -180,7 +181,7 @@ export class PosController {
       return res.status(201).json(turno);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
-      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.errors });
+      if (error instanceof ZodError) return res.status(400).json({ error: 'Error de validación', details: error.issues });
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
@@ -192,7 +193,7 @@ export class PosController {
    * 401 - No autorizado
    * 500 - Error interno
    */
-  static async getEstadoCaja(req: Request, res: Response, next: NextFunction) {
+  static async getEstadoCaja(req: Request, res: Response) {
     try {
       const usuarioId = req.user!.sub;
       const turno = await PosService.getTurnoActivo(usuarioId);

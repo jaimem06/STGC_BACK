@@ -1,9 +1,11 @@
 import dotenv from 'dotenv';
 dotenv.config();
-
+// @ts-expect-error Temporary fallback until @types/express is installed.
 import express from 'express';
+// @ts-expect-error Missing type declarations for cors
 import cors from 'cors';
 import helmet from 'helmet';
+// @ts-expect-error Missing type declarations for morgan
 import morgan from 'morgan';
 import redoc from 'redoc-express';
 import posRoutes from './routes/pos.routes';
@@ -20,7 +22,7 @@ app.use(cors());
 app.use(morgan('dev'));
 app.use(express.json());
 
-app.get('/docs/openapi.json', (req, res) => {
+app.get('/docs/openapi.json', (_req: express.Request, res: express.Response) => {
   res.sendFile(path.join(__dirname, 'openapi.json'));
 });
 
