@@ -3,7 +3,7 @@
 set -o errexit
 
 echo "Installing dependencies..."
-npm ci --include=dev
+NODE_ENV=development npm install
 
 echo "Generating Prisma Client..."
 npx prisma generate
