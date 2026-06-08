@@ -29,22 +29,14 @@ export const authMiddleware = async (
     }
 
     const token = authHeader.split(' ')[1];
-    const secret = process.env.JWT_SECRET || 'secret';
+    const secret = process.env.JWT_SECRET;
+    if (!secret) throw new AppError('JWT_SECRET no configurado', 500);
 
     const decoded = jwt.verify(token, secret) as JWTPayload;
 
-    // VALIDACIÓN ESTRICTA DE ROL (Sprint 3)
-    if (decoded.role !== 'ADMIN' && decoded.role !== 'CAJERO') {
+    const allowedRoles = ['ADMIN', 'CAJERO_MESERO', 'GERENTE_GENERAL', 'GERENTE_OPERACIONES'];
+    if (!allowedRoles.includes(decoded.role)) {
       throw new AppError('Prohibido - Rol insuficiente', 403);
-    }
-
-    // Validar session_token contra BD
-    const sessionActive = await prisma.activeSession.findUnique({
-      where: { sessionToken: decoded.session_token }
-    });
-
-    if (!sessionActive) {
-      throw new AppError('Sesión inválida o expirada', 401);
     }
 
     req.user = decoded;

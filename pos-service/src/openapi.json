@@ -45,7 +45,12 @@
           }
         },
         "responses": {
-          "201": { "description": "Turno abierto exitosamente" }
+          "201": { "description": "Turno abierto exitosamente" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     },
@@ -68,7 +73,12 @@
           }
         },
         "responses": {
-          "200": { "description": "Caja cerrada exitosamente" }
+          "200": { "description": "Caja cerrada exitosamente" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     },
@@ -77,7 +87,12 @@
         "summary": "Listar productos de cafetería",
         "tags": ["Inventario"],
         "responses": {
-          "200": { "description": "Lista de productos" }
+          "200": { "description": "Lista de productos" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     },
@@ -112,7 +127,12 @@
           }
         },
         "responses": {
-          "201": { "description": "Pedido creado" }
+          "201": { "description": "Pedido creado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     },
@@ -124,7 +144,12 @@
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "Pedido actualizado" }
+          "200": { "description": "Pedido actualizado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     },
@@ -136,7 +161,12 @@
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "Pedido anulado" }
+          "200": { "description": "Pedido anulado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     },
@@ -162,7 +192,12 @@
           }
         },
         "responses": {
-          "200": { "description": "Pago procesado" }
+          "200": { "description": "Pago procesado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     },
@@ -174,7 +209,12 @@
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "Archivo PDF", "content": { "application/pdf": {} } }
+          "200": { "description": "Archivo PDF", "content": { "application/pdf": {} } },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
         }
       }
     }

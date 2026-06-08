@@ -37,9 +37,11 @@ export class PosService {
     const turno = await this.getTurnoActivo(usuarioId);
     if (!turno) throw new AppError('No hay un turno abierto', 400);
 
+    const token = req.headers.authorization;
+
     // Validar stock de todos los items
     for (const item of data.items) {
-      const ok = await validateStock(item.productoId, item.cantidad);
+      const ok = await validateStock(item.productoId, item.cantidad, token);
       if (!ok) throw new AppError(`Stock insuficiente para ${item.nombre}`, 400);
     }
 
@@ -78,7 +80,7 @@ export class PosService {
 
     // Reservar stock
     for (const item of data.items) {
-      await updateStock(item.productoId, item.cantidad, 'RESERVAR');
+      await updateStock(item.productoId, item.cantidad, 'RESERVAR', token);
     }
 
     await auditAction(req, 'CREAR_PEDIDO');
@@ -123,9 +125,10 @@ export class PosService {
       data: { estado: 'ANULADO' }
     });
 
-    // Liberar stock
+    // Liberar stock reservado
+    const token = req.headers.authorization;
     for (const item of pedido.items) {
-      await updateStock(item.productoId, item.cantidad, 'LIBERAR');
+      await updateStock(item.productoId, item.cantidad, 'LIBERAR', token);
     }
 
     await auditAction(req, 'ANULAR_PEDIDO');
@@ -156,9 +159,10 @@ export class PosService {
       }
     });
 
-    // Descontar stock definitivamente
+    // Descontar stock real
+    const token = req.headers.authorization;
     for (const item of pedido.items) {
-      await updateStock(item.productoId, item.cantidad, 'DESCONTAR');
+      await updateStock(item.productoId, item.cantidad, 'DESCONTAR', token);
     }
 
     await auditAction(req, 'PAGAR_PEDIDO');
@@ -208,20 +212,8 @@ export class PosService {
       }
     });
 
-    // Invalidación de sesión: Destruir session_token local y notificar a auth-service
-    await prisma.activeSession.deleteMany({
-      where: { usuarioId }
-    });
-
-    try {
-      await axios.post(
-        `${process.env.AUTH_SERVICE_URL}/internal/invalidate-sessions`,
-        { usuario_id: usuarioId },
-        { headers: { 'X-Internal-Api-Key': process.env.INTERNAL_API_KEY } }
-      );
-    } catch (error) {
-      console.error('Error invalidando sesiones en auth-service:', error);
-    }
+    // El cierre de caja no debe cerrar la sesión del usuario (logout) en el sistema.
+    // Simplemente cierra el turno del POS.
 
     await auditAction(req, 'CIERRE_CAJA');
 
