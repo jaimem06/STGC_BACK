@@ -35,7 +35,15 @@ fn parse_flex_date(date_str: Option<String>) -> Option<DateTime<Utc>> {
     get,
     path = "/inventario/finca",
     tag = "Inventario Finca",
-    responses((status = 200, body = [InventarioItem]))
+    responses(
+        (status = 200, description = "Catálogo de insumos y productos de producción recuperado", body = [InventarioItem]),
+        (status = 401, description = "No autorizado: Requiere token Bearer válido"),
+        (status = 403, description = "Prohibido: Rol insuficiente para acceder a datos de finca"),
+        (status = 500, description = "Error interno al consultar la base de datos"),
+        (status = 503, description = "Servicio de base de datos no disponible")
+    ),
+    summary = "Listar ítems de producción (Finca)",
+    description = "Obtiene todos los elementos del inventario pertenecientes al módulo de Finca. Incluye insumos agrícolas y café en sus diferentes fases."
 )]
 pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<InventarioItem>>, StatusCode> {
     let items = sqlx::query_as::<_, InventarioItem>(
@@ -52,7 +60,15 @@ pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<Inventari
     path = "/inventario/finca/nuevo",
     tag = "Inventario Finca",
     request_body = CreateInventarioItem,
-    responses((status = 201, body = InventarioItem))
+    responses(
+        (status = 201, description = "Ítem de finca creado exitosamente", body = InventarioItem),
+        (status = 400, description = "Datos de entrada mal formados"),
+        (status = 401, description = "Autenticación requerida"),
+        (status = 409, description = "Error: El código SKU ya existe en el sistema"),
+        (status = 422, description = "Faltan campos obligatorios o formato inválido")
+    ),
+    summary = "Registrar nuevo ítem de finca",
+    description = "Crea un nuevo registro en el inventario forzando el módulo a 'FINCA'. Permite asociar códigos de trazabilidad y fases de procesamiento."
 )]
 pub async fn create_item(
     State(pool): State<PgPool>,
@@ -86,8 +102,16 @@ pub async fn create_item(
     get,
     path = "/inventario/finca/{id}",
     tag = "Inventario Finca",
-    params(("id" = Uuid, Path)),
-    responses((status = 200, body = InventarioItem))
+    params(("id" = Uuid, Path, description = "UUID único del ítem")),
+    responses(
+        (status = 200, description = "Detalle del ítem obtenido correctamente", body = InventarioItem),
+        (status = 401, description = "No autorizado"),
+        (status = 404, description = "El ítem no existe en el módulo de finca"),
+        (status = 500, description = "Error interno del servidor"),
+        (status = 503, description = "Servicio no disponible")
+    ),
+    summary = "Obtener detalle de ítem de finca",
+    description = "Recupera la ficha técnica completa de un producto o insumo de la finca, incluyendo datos de trazabilidad si existen."
 )]
 pub async fn get_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Result<Json<InventarioItem>, StatusCode> {
     let item = sqlx::query_as::<_, InventarioItem>("SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false")
@@ -99,9 +123,17 @@ pub async fn get_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Resul
     put,
     path = "/inventario/finca/{id}",
     tag = "Inventario Finca",
-    params(("id" = Uuid, Path)),
+    params(("id" = Uuid, Path, description = "UUID del ítem a modificar")),
     request_body = UpdateInventarioItem,
-    responses((status = 200, body = InventarioItem))
+    responses(
+        (status = 200, description = "Información actualizada exitosamente", body = InventarioItem),
+        (status = 400, description = "Error en el formato de actualización"),
+        (status = 401, description = "Acceso denegado"),
+        (status = 404, description = "Ítem no encontrado o pertenece a otro módulo"),
+        (status = 500, description = "Fallo al escribir en la base de datos")
+    ),
+    summary = "Actualizar atributos del ítem",
+    description = "Modifica los metadatos de un producto de finca. No altera el stock físico (use el endpoint de movimientos)."
 )]
 pub async fn update_item(
     Path(id): Path<Uuid>,
@@ -132,9 +164,17 @@ pub async fn update_item(
     patch,
     path = "/inventario/finca/{id}/estado",
     tag = "Inventario Finca",
-    params(("id" = Uuid, Path)),
+    params(("id" = Uuid, Path, description = "ID del ítem")),
     request_body = UpdateEstadoDto,
-    responses((status = 200, body = InventarioItem))
+    responses(
+        (status = 200, description = "Estado actualizado", body = InventarioItem),
+        (status = 400, description = "Estado no válido para flujo de finca"),
+        (status = 401, description = "No autorizado"),
+        (status = 404, description = "Ítem no encontrado"),
+        (status = 422, description = "Error de validación de esquema")
+    ),
+    summary = "Modificar estado del ítem (Finca)",
+    description = "HU025: Actualización manual de estados operativos (ej. EN_TRANSITO o BLOQUEADO)."
 )]
 pub async fn update_status(
     Path(id): Path<Uuid>,
@@ -157,8 +197,16 @@ pub async fn update_status(
     delete,
     path = "/inventario/finca/{id}",
     tag = "Inventario Finca",
-    params(("id" = Uuid, Path)),
-    responses((status = 204))
+    params(("id" = Uuid, Path, description = "ID del ítem")),
+    responses(
+        (status = 204, description = "Ítem eliminado correctamente"),
+        (status = 401, description = "No autorizado"),
+        (status = 403, description = "Permisos de administración requeridos"),
+        (status = 404, description = "Ítem inexistente"),
+        (status = 500, description = "Error interno")
+    ),
+    summary = "Eliminar ítem de finca (Borrado Lógico)",
+    description = "HU024: Marca el ítem como eliminado ocultándolo de las listas generales pero preservando sus datos."
 )]
 pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Result<StatusCode, StatusCode> {
     sqlx::query("UPDATE inventario_items SET is_deleted = true WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false")
@@ -171,7 +219,15 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
     path = "/inventario/finca/movimientos",
     tag = "Inventario Finca",
     request_body = MovimientoStock,
-    responses((status = 201, body = MovimientoStock))
+    responses(
+        (status = 201, description = "Movimiento registrado y stock recalculado", body = MovimientoStock),
+        (status = 400, description = "Operación no permitida: Stock insuficiente para salida"),
+        (status = 401, description = "No autorizado"),
+        (status = 404, description = "Ítem destino no existe"),
+        (status = 500, description = "Error crítico transaccional")
+    ),
+    summary = "Registrar entrada/salida de finca",
+    description = "Registra una transacción (cosecha, compra de insumos, merma) y actualiza automáticamente la cantidad disponible."
 )]
 pub async fn create_movement(
     State(pool): State<PgPool>,
@@ -201,8 +257,16 @@ pub async fn create_movement(
     get,
     path = "/inventario/finca/{id}/movimientos",
     tag = "Inventario Finca",
-    params(("id" = Uuid, Path), MovementFilter),
-    responses((status = 200, body = [MovimientoStock]))
+    params(("id" = Uuid, Path, description = "ID del ítem"), MovementFilter),
+    responses(
+        (status = 200, description = "Historial cronológico de producción recuperado", body = [MovimientoStock]),
+        (status = 400, description = "Parámetros de fecha ISO-8601 inválidos"),
+        (status = 401, description = "No autorizado"),
+        (status = 404, description = "Ítem no encontrado"),
+        (status = 500, description = "Error interno")
+    ),
+    summary = "Obtener historial de ítem (Finca)",
+    description = "Lista cronológicamente todos los movimientos de un producto o insumo de finca con filtros de fecha opcionales."
 )]
 pub async fn list_movements(
     Path(id): Path<Uuid>,
@@ -211,6 +275,7 @@ pub async fn list_movements(
 ) -> Result<Json<Vec<MovimientoStock>>, StatusCode> {
     let start = parse_flex_date(filter.start_date);
     let end = parse_flex_date(filter.end_date);
+
     let movements = sqlx::query_as::<_, MovimientoStock>(
         "SELECT m.* FROM movimientos_stock m JOIN inventario_items i ON m.item_id = i.id 
          WHERE i.id = $1 AND i.modulo = 'FINCA' AND (m.fecha >= $2 OR $2 IS NULL) AND (m.fecha <= $3 OR $3 IS NULL) ORDER BY m.fecha DESC"
@@ -225,7 +290,15 @@ pub async fn list_movements(
     path = "/inventario/finca/movimientos/exportar",
     tag = "Inventario Finca",
     params(MovementFilter),
-    responses((status = 200, description = "CSV"))
+    responses(
+        (status = 200, description = "CSV de auditoría de finca generado", content_type = "text/csv"),
+        (status = 401, description = "No autorizado"),
+        (status = 403, description = "Faltan permisos de exportación"),
+        (status = 500, description = "Error al serializar datos a CSV"),
+        (status = 503, description = "Servicio ocupado")
+    ),
+    summary = "Exportar auditoría general finca (CSV)",
+    description = "HU026: Genera un archivo CSV con el reporte total de movimientos del módulo de finca para control administrativo."
 )]
 pub async fn export_all_movements_csv(
     State(pool): State<PgPool>,
@@ -233,6 +306,7 @@ pub async fn export_all_movements_csv(
 ) -> impl IntoResponse {
     let start = parse_flex_date(filter.start_date);
     let end = parse_flex_date(filter.end_date);
+
     let movements = sqlx::query_as::<_, MovimientoStock>(
         "SELECT m.* FROM movimientos_stock m JOIN inventario_items i ON m.item_id = i.id 
          WHERE i.modulo = 'FINCA' AND (m.fecha >= $1 OR $1 IS NULL) AND (m.fecha <= $2 OR $2 IS NULL) ORDER BY m.fecha DESC"

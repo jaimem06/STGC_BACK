@@ -12,14 +12,14 @@ use crate::models::{LoteCafe, FaseCafe};
     path = "/trazabilidad/lotes",
     tag = "Trazabilidad",
     responses(
-        (status = 200, description = "Lista de lotes recuperada exitosamente", body = [LoteCafe]),
-        (status = 401, description = "No autorizado: Sesión no válida"),
-        (status = 403, description = "Prohibido: Sin permisos de lectura"),
-        (status = 500, description = "Error interno al recuperar los lotes de café"),
-        (status = 503, description = "Servicio de base de datos no disponible")
+        (status = 200, description = "Lista de lotes de café recuperada", body = [LoteCafe]),
+        (status = 401, description = "No autorizado: Requiere sesión activa"),
+        (status = 403, description = "Prohibido: Sin permisos para ver trazabilidad"),
+        (status = 500, description = "Error interno del servidor al consultar lotes"),
+        (status = 503, description = "Servicio de base de datos no disponible temporalmente")
     ),
     summary = "Listar Lotes de Café",
-    description = "Recupera todos los lotes de café registrados, permitiendo visualizar en qué fase de procesamiento se encuentra cada uno (pulpa, secado, tostado, etc.)."
+    description = "Obtiene todos los lotes registrados en el sistema, permitiendo visualizar su variedad, fase actual y calidad. Fundamental para el seguimiento de la cadena de valor."
 )]
 pub async fn list_lots(
     State(pool): State<PgPool>,
@@ -40,18 +40,18 @@ pub async fn list_lots(
     path = "/trazabilidad/lotes/{id}/transicion",
     tag = "Trazabilidad",
     params(
-        ("id" = Uuid, Path, description = "ID del lote que va a cambiar de fase")
+        ("id" = Uuid, Path, description = "ID único del lote a transicionar")
     ),
     request_body = FaseCafe,
     responses(
-        (status = 200, description = "El lote ha transicionado exitosamente a la nueva fase", body = LoteCafe),
-        (status = 400, description = "Transición inválida o parámetros incorrectos"),
+        (status = 200, description = "Transición de fase exitosa", body = LoteCafe),
+        (status = 400, description = "Transición inválida: Los datos enviados no son correctos"),
         (status = 401, description = "No autorizado"),
         (status = 404, description = "El lote origen especificado no existe"),
-        (status = 500, description = "Error crítico durante la creación del nuevo lote")
+        (status = 500, description = "Error crítico durante la creación del nuevo eslabón de la cadena")
     ),
     summary = "Transicionar Fase de Lote",
-    description = "Inicia el cambio de un lote de una fase a otra. Este proceso mantiene el vínculo de trazabilidad y actualiza el inventario físico automáticamente."
+    description = "Mueve un lote de café a su siguiente etapa de procesamiento (ej: de SECADO a TOSTADO). Crea un nuevo registro vinculado al anterior para mantener el historial."
 )]
 pub async fn transition_lot_phase(
     Path(id): Path<Uuid>,
@@ -99,17 +99,17 @@ pub async fn transition_lot_phase(
     path = "/trazabilidad/historial/{codigo_trazabilidad}",
     tag = "Trazabilidad",
     params(
-        ("codigo_trazabilidad" = Uuid, Path, description = "Código único de trazabilidad del lote original")
+        ("codigo_trazabilidad" = Uuid, Path, description = "Código único que identifica la genealogía del lote")
     ),
     responses(
-        (status = 200, description = "Cadena completa de trazabilidad recuperada", body = [LoteCafe]),
-        (status = 400, description = "Formato de código de trazabilidad inválido"),
-        (status = 401, description = "No autorizado"),
-        (status = 404, description = "No se encontró historial para el código proporcionado"),
-        (status = 500, description = "Error interno al reconstruir el historial")
+        (status = 200, description = "Cadena de trazabilidad completa recuperada", body = [LoteCafe]),
+        (status = 400, description = "Código de trazabilidad mal formado"),
+        (status = 401, description = "Sesión no válida"),
+        (status = 404, description = "No se encontraron registros para el código proporcionado"),
+        (status = 500, description = "Error interno al reconstruir la historia")
     ),
     summary = "Consultar Historial de Trazabilidad",
-    description = "Obtiene toda la historia de un lote de café, mostrando todas las fases por las que ha pasado desde su origen."
+    description = "Recupera cronológicamente todos los estados y transformaciones por los que ha pasado un lote de café desde su origen hasta la fase actual."
 )]
 pub async fn get_traceability_history(
     Path(codigo_trazabilidad): Path<Uuid>,

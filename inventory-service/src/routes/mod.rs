@@ -43,14 +43,14 @@ use crate::models::*;
         )
     ),
     tags(
-        (name = "Inventario Modulo 2", description = "Operaciones de inventario específicas para la Cafetería."),
-        (name = "Inventario Finca", description = "Operaciones de inventario para la Finca."),
-        (name = "Trazabilidad", description = "Seguimiento de la cadena de valor del café.")
+        (name = "Inventario Modulo 2", description = "Operaciones de inventario específicas para la Cafetería y Puntos de Venta (Insumos perecederos, productos finales)."),
+        (name = "Inventario Finca", description = "Gestión de insumos agrícolas y producción primaria de café."),
+        (name = "Trazabilidad", description = "Seguimiento de la cadena de suministro desde la cosecha hasta el procesamiento.")
     ),
     info(
-        title = "Servicio de Inventario - STGC",
-        version = "1.0.0",
-        description = "API para gestión de inventario y trazabilidad."
+        title = "Sistema de Gestión y Trazabilidad de Café (STGC) - API de Inventario",
+        version = "2.0.0",
+        description = "Documentación técnica de los endpoints de inventario y trazabilidad. Desarrollado en Rust (Axum, SQLx)."
     )
 )]
 pub struct ApiDoc;
@@ -59,7 +59,7 @@ pub fn create_router(pool: PgPool) -> Router {
     let api_routes = Router::new()
         // --- Inventario Modulo 2 ---
         .route("/inventario/pos", get(pos_inventory_handler::list_items))
-        .route("/inventario/pos/nuevo", post(pos_inventory_handler::create_item)) // RUTA SEPARADA
+        .route("/inventario/pos/nuevo", post(pos_inventory_handler::create_item))
         .route("/inventario/pos/movimientos", post(pos_inventory_handler::create_movement))
         .route("/inventario/pos/movimientos/exportar", get(pos_inventory_handler::export_all_movements_csv))
         .route("/inventario/pos/:id", get(pos_inventory_handler::get_item).put(pos_inventory_handler::update_item).delete(pos_inventory_handler::delete_item))
@@ -68,7 +68,7 @@ pub fn create_router(pool: PgPool) -> Router {
 
         // --- INVENTARIO FINCA ---
         .route("/inventario/finca", get(finca_inventory_handler::list_items))
-        .route("/inventario/finca/nuevo", post(finca_inventory_handler::create_item)) // RUTA SEPARADA
+        .route("/inventario/finca/nuevo", post(finca_inventory_handler::create_item))
         .route("/inventario/finca/movimientos", post(finca_inventory_handler::create_movement))
         .route("/inventario/finca/movimientos/exportar", get(finca_inventory_handler::export_all_movements_csv))
         .route("/inventario/finca/:id", get(finca_inventory_handler::get_item).put(finca_inventory_handler::update_item).delete(finca_inventory_handler::delete_item))
