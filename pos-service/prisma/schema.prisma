@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EstadoTurno {
+  ABIERTO
+  CERRADO
+}
+
+enum EstadoPedido {
+  EN_EDICION
+  PENDIENTE_PAGO
+  PAGADO
+  ANULADO
+}
+
+enum MetodoPago {
+  EFECTIVO
+  TARJETA
+  TRANSFERENCIA
+  OTRO
+}
+
+model Turno {
+  id              String       @id @default(uuid())
+  usuarioId       String       // ID del cajero desde auth-service
+  fechaApertura   DateTime     @default(now())
+  fechaCierre     DateTime?
+  montoApertura   Int          // En centavos para evitar coma flotante
+  montoCierreFisico Int?       // Lo que el cajero cuenta
+  montoCierreSistema Int?      // Lo que el sistema calcula
+  estado          EstadoTurno  @default(ABIERTO)
+  pedidos         Pedido[]
+  
+  @@index([usuarioId])
+}
+
+model Pedido {
+  id              String       @id @default(uuid())
+  turnoId         String
+  turno           Turno        @relation(fields: [turnoId], references: [id])
+  cliente         String?
+  items           PedidoItem[]
+  subtotal        Int          // En centavos
+  iva             Int          // En centavos
+  total           Int          // En centavos
+  estado          EstadoPedido @default(EN_EDICION)
+  metodoPago      MetodoPago?
+  fechaCreacion   DateTime     @default(now())
+  fechaActualizacion DateTime  @updatedAt
+
+  @@index([turnoId])
+}
+
+model PedidoItem {
+  id              String   @id @default(uuid())
+  pedidoId        String
+  pedido          Pedido   @relation(fields: [pedidoId], references: [id])
+  productoId      String   // ID del producto desde el inventario
+  nombre          String
+  cantidad        Int
+  precioUnitario  Int      // En centavos
+  subtotal        Int      // En centavos
+
+  @@index([pedidoId])
+}
+
+model ActiveSession {
+  id            String   @id @default(uuid())
+  usuarioId     String
+  sessionToken  String   @unique
+  fechaCreacion DateTime @default(now())
+
+  @@index([usuarioId])
+}
