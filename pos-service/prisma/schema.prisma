@@ -4,12 +4,14 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  schemas  = ["pos_service"]
 }
 
 enum EstadoTurno {
   ABIERTO
   CERRADO
   DESCUADRADO
+  @@schema("pos_service")
 }
 
 enum EstadoPedido {
@@ -17,6 +19,7 @@ enum EstadoPedido {
   PENDIENTE_PAGO
   PAGADO
   ANULADO
+  @@schema("pos_service")
 }
 
 enum MetodoPago {
@@ -24,21 +27,23 @@ enum MetodoPago {
   TARJETA_CREDITO
   TARJETA_DEBITO
   TRANSFERENCIA
+  @@schema("pos_service")
 }
 
 model Turno {
   id              String       @id @default(uuid())
-  usuarioId       String       // ID del cajero desde auth-service
+  usuarioId       String       
   fechaApertura   DateTime     @default(now())
   fechaCierre     DateTime?
   montoApertura   Float
-  montoCierreFisico Float?      // Lo que el cajero cuenta
-  montoCierreSistema Float?     // Lo que el sistema calcula
+  montoCierreFisico Float?      
+  montoCierreSistema Float?     
   diferencia      Float?
   estado          EstadoTurno  @default(ABIERTO)
   pedidos         Pedido[]
   
   @@index([usuarioId])
+  @@schema("pos_service")
 }
 
 model Pedido {
@@ -46,7 +51,6 @@ model Pedido {
   turnoId         String
   turno           Turno        @relation(fields: [turnoId], references: [id])
   cajero_id       String
-  cliente         String?      // Legacy field, keep for compatibility or migrate? instructions say add new ones
   cliente_nombre  String?
   cliente_cedula  String?
   items           PedidoItem[]
@@ -60,19 +64,21 @@ model Pedido {
   fechaActualizacion DateTime  @updatedAt
 
   @@index([turnoId])
+  @@schema("pos_service")
 }
 
 model PedidoItem {
   id              String   @id @default(uuid())
   pedidoId        String
   pedido          Pedido   @relation(fields: [pedidoId], references: [id])
-  productoId      String   // ID del producto desde el inventario
+  productoId      String   
   nombre          String
   cantidad        Int
   precioUnitario  Float
   subtotal        Float
 
   @@index([pedidoId])
+  @@schema("pos_service")
 }
 
 model ActiveSession {
@@ -82,4 +88,5 @@ model ActiveSession {
   fechaCreacion DateTime @default(now())
 
   @@index([usuarioId])
+  @@schema("pos_service")
 }
