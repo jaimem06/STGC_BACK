@@ -1,11 +1,8 @@
 import dotenv from 'dotenv';
 dotenv.config();
-// @ts-expect-error Temporary fallback until @types/express is installed.
 import express from 'express';
-// @ts-expect-error Missing type declarations for cors
 import cors from 'cors';
 import helmet from 'helmet';
-// @ts-expect-error Missing type declarations for morgan
 import morgan from 'morgan';
 import redoc from 'redoc-express';
 import posRoutes from './routes/pos.routes';
