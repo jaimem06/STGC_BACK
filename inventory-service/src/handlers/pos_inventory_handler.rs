@@ -36,14 +36,12 @@ fn parse_flex_date(date_str: Option<String>) -> Option<DateTime<Utc>> {
     path = "/inventario/pos",
     tag = "Inventario Modulo 2",
     responses(
-        (status = 200, description = "Lista de ítems recuperada exitosamente", body = [InventarioItem]),
-        (status = 401, description = "No autorizado: Token de acceso inválido o expirado"),
-        (status = 403, description = "Prohibido: El usuario no tiene permisos para ver el inventario de cafetería"),
-        (status = 500, description = "Error interno del servidor al procesar la consulta SQL"),
-        (status = 503, description = "Servicio no disponible: La base de datos no responde")
+        (status = 200, description = "Catálogo de productos de cafetería recuperado", body = [InventarioItem]),
+        (status = 401, description = "No autorizado"),
+        (status = 500, description = "Error interno")
     ),
-    summary = "Obtener catálogo de cafetería",
-    description = "Retorna una lista de todos los productos e insumos pertenecientes al módulo de Cafetería que no han sido eliminados lógicamente. Úselo para cargar la tabla principal del inventario."
+    summary = "Listar ítems de cafetería/POS",
+    description = "Obtiene todos los elementos del inventario pertenecientes al módulo de CAFETERIA."
 )]
 pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<InventarioItem>>, StatusCode> {
     let items = sqlx::query_as::<_, InventarioItem>(
@@ -63,15 +61,18 @@ pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<Inventari
     path = "/inventario/pos/nuevo",
     tag = "Inventario Modulo 2",
     request_body = CreateInventarioItem,
-    responses(
-        (status = 201, description = "Producto registrado exitosamente", body = InventarioItem),
-        (status = 400, description = "Solicitud incorrecta: Datos de entrada malformados"),
-        (status = 401, description = "No autorizado: Requiere autenticación válida"),
-        (status = 409, description = "Conflicto: El código SKU ya está en uso por otro producto"),
-        (status = 422, description = "Entidad no procesable: Fallo en la validación de campos obligatorios")
+    security(
+        ("bearer_auth" = [])
     ),
-    summary = "Crear nuevo ítem de cafetería",
-    description = "Registra un nuevo producto en el catálogo. El sistema asigna automáticamente el módulo 'CAFETERIA'. Se recomienda enviar el SKU en formato alfanumérico único."
+    responses(
+        (status = 201, description = "Ítem de POS creado exitosamente", body = InventarioItem),
+        (status = 400, description = "Datos de entrada inválidos"),
+        (status = 401, description = "Autenticación requerida"),
+        (status = 409, description = "SKU duplicado"),
+        (status = 500, description = "Error interno")
+    ),
+    summary = "Registrar nuevo ítem de cafetería",
+    description = "Crea un nuevo producto o insumo en el inventario del punto de venta."
 )]
 pub async fn create_item(
     State(pool): State<PgPool>,
@@ -103,41 +104,21 @@ pub async fn create_item(
 }
 
 #[utoipa::path(
-    get,
-    path = "/inventario/pos/{id}",
-    tag = "Inventario Modulo 2",
-    params(("id" = Uuid, Path, description = "ID único del producto")),
-    responses(
-        (status = 200, description = "Detalle del producto obtenido", body = InventarioItem),
-        (status = 401, description = "No autorizado"),
-        (status = 404, description = "El producto no existe o fue eliminado lógicamente"),
-        (status = 500, description = "Error interno del servidor"),
-        (status = 504, description = "Tiempo de espera agotado en la base de datos")
-    ),
-    summary = "Obtener detalle de un producto",
-    description = "Recupera toda la información de un ítem específico incluyendo su cantidad actual, precio y estado de disponibilidad."
-)]
-pub async fn get_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Result<Json<InventarioItem>, StatusCode> {
-    let item = sqlx::query_as::<_, InventarioItem>("SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'CAFETERIA' AND is_deleted = false")
-        .bind(id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(item))
-}
-
-#[utoipa::path(
     put,
     path = "/inventario/pos/{id}",
     tag = "Inventario Modulo 2",
-    params(("id" = Uuid, Path, description = "ID del producto a editar")),
+    params(("id" = Uuid, Path, description = "ID del ítem")),
     request_body = UpdateInventarioItem,
-    responses(
-        (status = 200, description = "Metadatos actualizados", body = InventarioItem),
-        (status = 400, description = "Datos de actualización inválidos"),
-        (status = 401, description = "Sesión no válida"),
-        (status = 404, description = "Producto no encontrado"),
-        (status = 500, description = "Fallo en la persistencia de datos")
+    security(
+        ("bearer_auth" = [])
     ),
-    summary = "Actualizar información de producto",
-    description = "Permite modificar los atributos descriptivos y de configuración de stock de un ítem. No afecta directamente a la cantidad actual (use el endpoint de movimientos para eso)."
+    responses(
+        (status = 200, description = "Ítem actualizado", body = InventarioItem),
+        (status = 404, description = "No encontrado"),
+        (status = 500, description = "Error interno")
+    ),
+    summary = "Actualizar atributos del ítem (POS)",
+    description = "Modifica los datos descriptivos de un producto de cafetería."
 )]
 pub async fn update_item(
     Path(id): Path<Uuid>,
@@ -146,23 +127,15 @@ pub async fn update_item(
     Json(payload): Json<UpdateInventarioItem>,
 ) -> Result<Json<InventarioItem>, StatusCode> {
     let fecha = parse_flex_date(payload.fecha_caducidad);
-
     let item = sqlx::query_as::<_, InventarioItem>(
-        "UPDATE inventario_items SET 
-            nombre = COALESCE($1, nombre), 
-            precio = COALESCE($2, precio), 
-            descripcion = COALESCE($3, descripcion), 
-            stock_minimo = COALESCE($4, stock_minimo), 
-            unidad_medida = COALESCE($5, unidad_medida),
-            fecha_caducidad = COALESCE($6, fecha_caducidad),
-            updated_at = NOW()
+        "UPDATE inventario_items SET nombre = COALESCE($1, nombre), precio = COALESCE($2, precio), 
+         descripcion = COALESCE($3, descripcion), stock_minimo = COALESCE($4, stock_minimo), 
+         unidad_medida = COALESCE($5, unidad_medida), fecha_caducidad = COALESCE($6, fecha_caducidad),
+         updated_at = NOW()
          WHERE id = $7 AND modulo = 'CAFETERIA' AND is_deleted = false RETURNING *"
     )
     .bind(payload.nombre).bind(payload.precio).bind(payload.descripcion).bind(payload.stock_minimo).bind(payload.unidad_medida).bind(fecha).bind(id)
-    .fetch_optional(&pool).await.map_err(|e| {
-        tracing::error!("Error SQL update_item (POS): {:?}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?.ok_or(StatusCode::NOT_FOUND)?;
+    .fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
 
     enviar_auditoria(user_id, "POS_UPDATE_ITEM".to_string(), format!("/inventario/pos/{}", id), "N/A".to_string());
     Ok(Json(item))
@@ -172,17 +145,17 @@ pub async fn update_item(
     patch,
     path = "/inventario/pos/{id}/estado",
     tag = "Inventario Modulo 2",
-    params(("id" = Uuid, Path, description = "ID del producto")),
+    params(("id" = Uuid, Path, description = "ID del ítem")),
     request_body = UpdateEstadoDto,
-    responses(
-        (status = 200, description = "Estado del producto actualizado", body = InventarioItem),
-        (status = 400, description = "Valor de estado no soportado"),
-        (status = 401, description = "Acceso denegado"),
-        (status = 404, description = "Ítem inexistente"),
-        (status = 422, description = "Fallo en la validación del estado enviado")
+    security(
+        ("bearer_auth" = [])
     ),
-    summary = "Cambiar estado de disponibilidad",
-    description = "HU025: Transición manual del estado del ítem (ej. BLOQUEADO para inventario o INACTIVO para discontinuación)."
+    responses(
+        (status = 200, description = "Estado actualizado", body = InventarioItem),
+        (status = 404, description = "No encontrado")
+    ),
+    summary = "Actualizar estado operativo (POS)",
+    description = "Permite cambiar manualmente el estado (ej. DISPONIBLE a AGOTADO)."
 )]
 pub async fn update_status(
     Path(id): Path<Uuid>,
@@ -195,10 +168,7 @@ pub async fn update_status(
          WHERE id = $2 AND modulo = 'CAFETERIA' AND is_deleted = false RETURNING *"
     )
     .bind(&payload.estado).bind(id)
-    .fetch_optional(&pool).await.map_err(|e| {
-        tracing::error!("Error SQL update_status (POS): {:?}", e);
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?.ok_or(StatusCode::NOT_FOUND)?;
+    .fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
 
     enviar_auditoria(user_id, "POS_UPDATE_STATUS".to_string(), format!("/inventario/pos/{}/estado", id), "N/A".to_string());
     Ok(Json(item))
@@ -208,25 +178,17 @@ pub async fn update_status(
     delete,
     path = "/inventario/pos/{id}",
     tag = "Inventario Modulo 2",
-    params(("id" = Uuid, Path, description = "ID del producto a eliminar")),
+    params(("id" = Uuid, Path, description = "ID del ítem")),
     responses(
-        (status = 204, description = "Eliminación lógica exitosa"),
-        (status = 401, description = "No autorizado"),
-        (status = 403, description = "No posee el rol administrativo necesario"),
-        (status = 404, description = "El producto no se encontró"),
-        (status = 500, description = "Error interno durante la operación")
+        (status = 204, description = "Eliminado con éxito"),
+        (status = 404, description = "No encontrado")
     ),
-    summary = "Eliminar producto lógicamente",
-    description = "HU024: Marca el producto como eliminado pero mantiene sus registros históricos de movimientos para auditoría."
+    summary = "Eliminar ítem (Borrado lógico POS)",
+    description = "Marca un ítem como eliminado para el punto de venta."
 )]
 pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Result<StatusCode, StatusCode> {
-    let result = sqlx::query("UPDATE inventario_items SET is_deleted = true WHERE id = $1 AND modulo = 'CAFETERIA' AND is_deleted = false")
-        .bind(id).execute(&pool).await.map_err(|e| {
-            tracing::error!("Error SQL delete_item (POS): {:?}", e);
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-    
-    if result.rows_affected() == 0 { return Err(StatusCode::NOT_FOUND); }
+    sqlx::query("UPDATE inventario_items SET is_deleted = true WHERE id = $1 AND modulo = 'CAFETERIA'")
+        .bind(id).execute(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -235,15 +197,16 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
     path = "/inventario/pos/movimientos",
     tag = "Inventario Modulo 2",
     request_body = MovimientoStock,
-    responses(
-        (status = 201, description = "Transacción registrada y existencia actualizada", body = MovimientoStock),
-        (status = 400, description = "Stock insuficiente o cantidad negativa"),
-        (status = 401, description = "No autorizado"),
-        (status = 404, description = "El ítem destino no existe"),
-        (status = 500, description = "Error en el proceso transaccional")
+    security(
+        ("bearer_auth" = [])
     ),
-    summary = "Registrar entrada o salida",
-    description = "Crea un registro de movimiento y actualiza la cantidad física del producto. Si el stock cae bajo el mínimo, el estado cambia automáticamente a 'STOCK_BAJO'."
+    responses(
+        (status = 201, description = "Movimiento registrado", body = MovimientoStock),
+        (status = 400, description = "Stock insuficiente"),
+        (status = 404, description = "Ítem no encontrado")
+    ),
+    summary = "Registrar movimiento de stock (POS)",
+    description = "Registra una entrada o salida y actualiza el stock actual."
 )]
 pub async fn create_movement(
     State(pool): State<PgPool>,
@@ -251,6 +214,7 @@ pub async fn create_movement(
     Json(payload): Json<MovimientoStock>,
 ) -> Result<(StatusCode, Json<MovimientoStock>), StatusCode> {
     let mut tx = pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
     let item = sqlx::query_as::<_, InventarioItem>("SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'CAFETERIA' FOR UPDATE")
         .bind(payload.item_id).fetch_one(&mut *tx).await.map_err(|_| StatusCode::NOT_FOUND)?;
     
@@ -267,8 +231,13 @@ pub async fn create_movement(
     sqlx::query("UPDATE inventario_items SET cantidad = $1, estado = $2 WHERE id = $3")
         .bind(nueva_cantidad).bind(nuevo_estado).bind(item.id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     
-    let movimiento = sqlx::query_as::<_, MovimientoStock>("INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo) VALUES ($1, $2, $3, $4, NOW(), $5) RETURNING *")
-        .bind(Uuid::new_v4()).bind(item.id).bind(payload.cantidad).bind(&payload.tipo).bind(&payload.motivo).fetch_one(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let movimiento = sqlx::query_as::<_, MovimientoStock>(
+        "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo, lote_id) VALUES ($1, $2, $3, $4, NOW(), $5, $6) RETURNING *"
+    )
+    .bind(Uuid::new_v4()).bind(item.id).bind(payload.cantidad).bind(&payload.tipo).bind(&payload.motivo).bind(payload.lote_id).fetch_one(&mut *tx).await.map_err(|e| {
+        tracing::error!("Error SQL insert_movement (POS): {:?}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
     
     tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     enviar_auditoria(user_id, "POS_MOVEMENT".to_string(), format!("/inventario/pos/movimientos/{}", movimiento.id), "N/A".to_string());
@@ -279,16 +248,13 @@ pub async fn create_movement(
     get,
     path = "/inventario/pos/{id}/movimientos",
     tag = "Inventario Modulo 2",
-    params(("id" = Uuid, Path, description = "ID del producto"), MovementFilter),
+    params(("id" = Uuid, Path, description = "ID del ítem"), MovementFilter),
     responses(
-        (status = 200, description = "Historial cronológico recuperado", body = [MovimientoStock]),
-        (status = 400, description = "Formato de fechas incorrecto"),
-        (status = 401, description = "No autorizado"),
-        (status = 404, description = "Producto no encontrado"),
-        (status = 500, description = "Error interno de servidor")
+        (status = 200, description = "Lista de movimientos", body = [MovimientoStock]),
+        (status = 404, description = "No encontrado")
     ),
-    summary = "Historial de movimientos por ítem",
-    description = "Lista todos los movimientos asociados a un producto filtrando opcionalmente por rango de fechas ISO-8601."
+    summary = "Historial de movimientos por ítem (POS)",
+    description = "Obtiene los movimientos históricos de un producto específico en cafetería."
 )]
 pub async fn list_movements(
     Path(id): Path<Uuid>,
@@ -311,18 +277,20 @@ pub async fn list_movements(
     path = "/inventario/pos/movimientos/exportar",
     tag = "Inventario Modulo 2",
     params(MovementFilter),
-    responses(
-        (status = 200, description = "Reporte CSV generado exitosamente", content_type = "text/csv"),
-        (status = 400, description = "Error en parámetros de exportación"),
-        (status = 401, description = "No autorizado"),
-        (status = 500, description = "Error crítico al serializar CSV"),
-        (status = 503, description = "Error de conexión en exportación")
+    security(
+        ("bearer_auth" = [])
     ),
-    summary = "Exportar auditoría general (CSV)",
-    description = "HU026: Descarga un reporte completo de todos los movimientos del módulo de cafetería para auditoría externa."
+    responses(
+        (status = 200, description = "Archivo CSV con movimientos", content_type = "text/csv"),
+        (status = 401, description = "No autorizado"),
+        (status = 403, description = "Permisos insuficientes")
+    ),
+    summary = "Exportar auditoría general POS (CSV)",
+    description = "Genera un reporte en CSV de todos los movimientos de la cafetería. Requiere autenticación."
 )]
 pub async fn export_all_movements_csv(
     State(pool): State<PgPool>,
+    Extension(user_id): Extension<String>,
     Query(filter): Query<MovementFilter>,
 ) -> impl IntoResponse {
     let start = parse_flex_date(filter.start_date);
@@ -335,10 +303,45 @@ pub async fn export_all_movements_csv(
     .fetch_all(&pool).await.unwrap_or_default();
 
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(&["ID", "ItemID", "Cantidad", "Tipo", "Fecha", "Motivo"]).unwrap();
+    wtr.write_record(&["ID", "ItemID", "Cantidad", "Tipo", "Fecha", "Motivo", "LoteID"]).unwrap();
     for m in movements {
-        wtr.write_record(&[m.id.to_string(), m.item_id.to_string(), m.cantidad.to_string(), format!("{:?}", m.tipo), m.fecha.to_string(), m.motivo]).unwrap();
+        wtr.write_record(&[
+            m.id.to_string(), 
+            m.item_id.to_string(), 
+            m.cantidad.to_string(), 
+            format!("{:?}", m.tipo), 
+            m.fecha.to_rfc3339(), 
+            m.motivo,
+            m.lote_id.map(|u| u.to_string()).unwrap_or_default()
+        ]).unwrap();
     }
     let csv_data = wtr.into_inner().unwrap();
-    (StatusCode::OK, [(header::CONTENT_TYPE, "text/csv"), (header::CONTENT_DISPOSITION, "attachment; filename=\"movimientos_pos.csv\"")], csv_data)
+    
+    enviar_auditoria(user_id, "POS_EXPORT_CSV".to_string(), "/inventario/pos/movimientos/exportar".to_string(), "N/A".to_string());
+    
+    (StatusCode::OK, [
+        (header::CONTENT_TYPE, "text/csv"), 
+        (header::CONTENT_DISPOSITION, "attachment; filename=\"movimientos_pos.csv\"")
+    ], csv_data)
+}
+
+pub async fn get_item_with_pool(pool: &PgPool, id: Uuid) -> Result<InventarioItem, StatusCode> {
+    sqlx::query_as::<_, InventarioItem>("SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'CAFETERIA' AND is_deleted = false")
+        .bind(id).fetch_optional(pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)
+}
+
+#[utoipa::path(
+    get,
+    path = "/inventario/pos/{id}",
+    tag = "Inventario Modulo 2",
+    params(("id" = Uuid, Path, description = "ID del ítem")),
+    responses(
+        (status = 200, description = "Detalle del ítem", body = InventarioItem),
+        (status = 404, description = "No encontrado")
+    ),
+    summary = "Obtener detalle de ítem (POS)",
+    description = "Recupera la información completa de un producto de cafetería."
+)]
+pub async fn get_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Result<Json<InventarioItem>, StatusCode> {
+    Ok(Json(get_item_with_pool(&pool, id).await?))
 }

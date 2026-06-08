@@ -42,6 +42,7 @@ use crate::models::*;
             ClasificacionInsumo, FaseCafe, TipoMovimiento, ModuloInventario
         )
     ),
+    modifiers(&SecurityAddon),
     tags(
         (name = "Inventario Modulo 2", description = "Operaciones de inventario específicas para la Cafetería y Puntos de Venta (Insumos perecederos, productos finales)."),
         (name = "Inventario Finca", description = "Gestión de insumos agrícolas y producción primaria de café."),
@@ -54,6 +55,24 @@ use crate::models::*;
     )
 )]
 pub struct ApiDoc;
+
+struct SecurityAddon;
+
+impl utoipa::Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "bearer_auth",
+                utoipa::openapi::security::SecurityScheme::Http(
+                    utoipa::openapi::security::HttpBuilder::new()
+                        .scheme(utoipa::openapi::security::HttpAuthScheme::Bearer)
+                        .bearer_format("JWT")
+                        .build(),
+                ),
+            );
+        }
+    }
+}
 
 pub fn create_router(pool: PgPool) -> Router {
     let api_routes = Router::new()

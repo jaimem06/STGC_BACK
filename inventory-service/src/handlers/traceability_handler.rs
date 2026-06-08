@@ -11,6 +11,9 @@ use crate::models::{LoteCafe, FaseCafe};
     get,
     path = "/trazabilidad/lotes",
     tag = "Trazabilidad",
+    security(
+        ("bearer_auth" = [])
+    ),
     responses(
         (status = 200, description = "Lista de lotes de café recuperada", body = [LoteCafe]),
         (status = 401, description = "No autorizado: Requiere sesión activa"),
@@ -43,6 +46,9 @@ pub async fn list_lots(
         ("id" = Uuid, Path, description = "ID único del lote a transicionar")
     ),
     request_body = FaseCafe,
+    security(
+        ("bearer_auth" = [])
+    ),
     responses(
         (status = 200, description = "Transición de fase exitosa", body = LoteCafe),
         (status = 400, description = "Transición inválida: Los datos enviados no son correctos"),
@@ -100,6 +106,9 @@ pub async fn transition_lot_phase(
     tag = "Trazabilidad",
     params(
         ("codigo_trazabilidad" = Uuid, Path, description = "Código único que identifica la genealogía del lote")
+    ),
+    security(
+        ("bearer_auth" = [])
     ),
     responses(
         (status = 200, description = "Cadena de trazabilidad completa recuperada", body = [LoteCafe]),

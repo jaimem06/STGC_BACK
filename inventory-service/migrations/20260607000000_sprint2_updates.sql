@@ -21,7 +21,7 @@ ALTER TYPE unidad_medida ADD VALUE IF NOT EXISTS 'UNIDADES';
 ALTER TYPE unidad_medida ADD VALUE IF NOT EXISTS 'LITROS';
 ALTER TYPE unidad_medida ADD VALUE IF NOT EXISTS 'KILOGRAMOS';
 
--- 3. Extend inventario_items table safely (Usando TIMESTAMPTZ para compatibilidad con chrono::DateTime<Utc>)
+-- 3. Extend inventario_items table safely
 ALTER TABLE inventario_items ADD COLUMN IF NOT EXISTS modulo modulo_inventario NOT NULL DEFAULT 'FINCA';
 ALTER TABLE inventario_items ALTER COLUMN modulo DROP DEFAULT;
 ALTER TABLE inventario_items ADD COLUMN IF NOT EXISTS stock_minimo DOUBLE PRECISION DEFAULT 0;
@@ -30,3 +30,6 @@ ALTER TABLE inventario_items ADD COLUMN IF NOT EXISTS fecha_caducidad TIMESTAMPT
 ALTER TABLE inventario_items ADD COLUMN IF NOT EXISTS codigo_trazabilidad UUID NULL;
 ALTER TABLE inventario_items ADD COLUMN IF NOT EXISTS calidad calidad_cafe NULL;
 ALTER TABLE inventario_items ADD COLUMN IF NOT EXISTS fase_produccion fase_cafe NULL;
+
+-- 4. Extend movimientos_stock table to support traceability (Sprint 2)
+ALTER TABLE movimientos_stock ADD COLUMN IF NOT EXISTS lote_id UUID NULL;

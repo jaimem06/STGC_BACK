@@ -60,6 +60,9 @@ pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<Inventari
     path = "/inventario/finca/nuevo",
     tag = "Inventario Finca",
     request_body = CreateInventarioItem,
+    security(
+        ("bearer_auth" = [])
+    ),
     responses(
         (status = 201, description = "Ítem de finca creado exitosamente", body = InventarioItem),
         (status = 400, description = "Datos de entrada mal formados"),
@@ -125,6 +128,9 @@ pub async fn get_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Resul
     tag = "Inventario Finca",
     params(("id" = Uuid, Path, description = "UUID del ítem a modificar")),
     request_body = UpdateInventarioItem,
+    security(
+        ("bearer_auth" = [])
+    ),
     responses(
         (status = 200, description = "Información actualizada exitosamente", body = InventarioItem),
         (status = 400, description = "Error en el formato de actualización"),
@@ -166,6 +172,9 @@ pub async fn update_item(
     tag = "Inventario Finca",
     params(("id" = Uuid, Path, description = "ID del ítem")),
     request_body = UpdateEstadoDto,
+    security(
+        ("bearer_auth" = [])
+    ),
     responses(
         (status = 200, description = "Estado actualizado", body = InventarioItem),
         (status = 400, description = "Estado no válido para flujo de finca"),
@@ -219,6 +228,9 @@ pub async fn delete_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Re
     path = "/inventario/finca/movimientos",
     tag = "Inventario Finca",
     request_body = MovimientoStock,
+    security(
+        ("bearer_auth" = [])
+    ),
     responses(
         (status = 201, description = "Movimiento registrado y stock recalculado", body = MovimientoStock),
         (status = 400, description = "Operación no permitida: Stock insuficiente para salida"),
@@ -290,6 +302,9 @@ pub async fn list_movements(
     path = "/inventario/finca/movimientos/exportar",
     tag = "Inventario Finca",
     params(MovementFilter),
+    security(
+        ("bearer_auth" = [])
+    ),
     responses(
         (status = 200, description = "CSV de auditoría de finca generado", content_type = "text/csv"),
         (status = 401, description = "No autorizado"),
@@ -298,10 +313,11 @@ pub async fn list_movements(
         (status = 503, description = "Servicio ocupado")
     ),
     summary = "Exportar auditoría general finca (CSV)",
-    description = "HU026: Genera un archivo CSV con el reporte total de movimientos del módulo de finca para control administrativo."
+    description = "HU026: Genera un archivo CSV con el reporte total de movimientos del módulo de finca para control administrativo. Requiere autenticación."
 )]
 pub async fn export_all_movements_csv(
     State(pool): State<PgPool>,
+    Extension(user_id): Extension<String>,
     Query(filter): Query<MovementFilter>,
 ) -> impl IntoResponse {
     let start = parse_flex_date(filter.start_date);
@@ -317,8 +333,21 @@ pub async fn export_all_movements_csv(
     let mut wtr = csv::Writer::from_writer(vec![]);
     wtr.write_record(&["ID", "ItemID", "Cantidad", "Tipo", "Fecha", "Motivo"]).unwrap();
     for m in movements {
-        wtr.write_record(&[m.id.to_string(), m.item_id.to_string(), m.cantidad.to_string(), format!("{:?}", m.tipo), m.fecha.to_string(), m.motivo]).unwrap();
+        wtr.write_record(&[
+            m.id.to_string(), 
+            m.item_id.to_string(), 
+            m.cantidad.to_string(), 
+            format!("{:?}", m.tipo), 
+            m.fecha.to_rfc3339(), 
+            m.motivo
+        ]).unwrap();
     }
     let csv_data = wtr.into_inner().unwrap();
-    (StatusCode::OK, [(header::CONTENT_TYPE, "text/csv"), (header::CONTENT_DISPOSITION, "attachment; filename=\"movimientos_finca.csv\"")], csv_data)
+
+    enviar_auditoria(user_id, "FINCA_EXPORT_CSV".to_string(), "/inventario/finca/movimientos/exportar".to_string(), "N/A".to_string());
+
+    (StatusCode::OK, [
+        (header::CONTENT_TYPE, "text/csv"), 
+        (header::CONTENT_DISPOSITION, "attachment; filename=\"movimientos_finca.csv\"")
+    ], csv_data)
 }
