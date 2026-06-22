@@ -56,6 +56,47 @@ pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<Inventari
     Ok(Json(items))
 }
 
+fn validate_create_item(payload: &CreateInventarioItem) -> Result<(), String> {
+    let nombre = payload.nombre.trim();
+    if nombre.is_empty() { return Err("El nombre del producto es obligatorio.".into()); }
+    if nombre.len() < 3 || nombre.len() > 90 { return Err("El nombre debe tener entre 3 y 90 caracteres.".into()); }
+
+    let sku = payload.sku.trim();
+    if sku.is_empty() { return Err("El SKU es obligatorio.".into()); }
+    if sku.len() != 6 { return Err("El SKU debe tener exactamente 6 caracteres.".into()); }
+    let chars: Vec<char> = sku.chars().collect();
+    if !sku.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit()) {
+        return Err("El SKU solo puede contener letras mayúsculas y números.".into());
+    }
+    let has_3_upper = chars[0..3].iter().all(|c| c.is_ascii_uppercase());
+    let has_3_digits = chars[3..6].iter().all(|c| c.is_ascii_digit());
+    if !has_3_upper || !has_3_digits {
+        return Err("El SKU debe tener 3 letras mayúsculas seguidas de 3 números.".into());
+    }
+
+    if payload.precio == 0.0 { return Err("El precio debe ser mayor a 0.".into()); }
+    if payload.precio < 0.0 { return Err("El precio no puede ser negativo.".into()); }
+    if payload.precio > 10000.0 { return Err("El precio no puede superar 10000.".into()); }
+    let precio_str = payload.precio.to_string();
+    if let Some(pos) = precio_str.find('.') {
+        if precio_str.len() - pos - 1 > 2 {
+            return Err("El precio solo puede tener hasta dos decimales.".into());
+        }
+    }
+
+    if payload.stock_minimo.is_none() { return Err("El stock mínimo es obligatorio.".into()); }
+    let minimo = payload.stock_minimo.unwrap();
+    if minimo < 0.0 { return Err("El stock mínimo no puede ser un número negativo.".into()); }
+    if minimo.fract().abs() > 1e-6 { return Err("El stock mínimo debe ser un número entero.".into()); }
+    if minimo > 30.0 { return Err("El stock mínimo no puede superar 30.".into()); }
+
+    let desc = payload.descripcion.as_deref().unwrap_or("").trim();
+    if desc.is_empty() { return Err("La descripción del producto es obligatoria.".into()); }
+    if desc.len() < 20 || desc.len() > 250 { return Err("La descripción debe tener entre 20 y 250 caracteres.".into()); }
+
+    Ok(())
+}
+
 #[utoipa::path(
     post,
     path = "/inventario/pos/nuevo",
@@ -68,7 +109,7 @@ pub async fn list_items(State(pool): State<PgPool>) -> Result<Json<Vec<Inventari
         (status = 201, description = "Ítem de POS creado exitosamente", body = InventarioItem),
         (status = 400, description = "Datos de entrada inválidos"),
         (status = 401, description = "Autenticación requerida"),
-        (status = 409, description = "SKU duplicado"),
+        (status = 409, description = "SKU o Nombre duplicado"),
         (status = 500, description = "Error interno")
     ),
     summary = "Registrar nuevo ítem de cafetería",
@@ -78,9 +119,40 @@ pub async fn create_item(
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
     Json(payload): Json<CreateInventarioItem>,
-) -> Result<(StatusCode, Json<InventarioItem>), StatusCode> {
+) -> Result<impl IntoResponse, StatusCode> {
+    if let Err(msg) = validate_create_item(&payload) {
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": msg }))).into_response());
+    }
+
+    let exists_sku = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM inventario_items WHERE sku = $1 AND modulo = 'CAFETERIA'")
+        .bind(&payload.sku).fetch_one(&pool).await.unwrap_or(0);
+    if exists_sku > 0 {
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Ya existe un producto con este SKU." }))).into_response());
+    }
+
+    let exists_nombre = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM inventario_items WHERE nombre = $1 AND modulo = 'CAFETERIA'")
+        .bind(&payload.nombre).fetch_one(&pool).await.unwrap_or(0);
+    if exists_nombre > 0 {
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Ya existe un producto con este nombre." }))).into_response());
+    }
+
     let id = Uuid::new_v4();
-    let fecha = parse_flex_date(payload.fecha_caducidad);
+    
+    let fecha = match payload.fecha_caducidad {
+        Some(ref fecha_str) if !fecha_str.trim().is_empty() => {
+            if let Some(f) = parse_flex_date(Some(fecha_str.clone())) {
+                let hoy = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap();
+                let hoy_utc = Utc.from_utc_datetime(&hoy);
+                if f < hoy_utc {
+                    return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "La fecha de caducidad no puede ser anterior a la fecha actual." }))).into_response());
+                }
+                Some(f)
+            } else {
+                return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El formato de fecha debe ser AAAA-MM-DD." }))).into_response());
+            }
+        },
+        _ => None,
+    };
 
     let item = sqlx::query_as::<_, InventarioItem>(
         "INSERT INTO inventario_items (id, sku, nombre, cantidad, tipo, estado, unidad_medida, precio, descripcion, fecha_caducidad, modulo, stock_minimo)
@@ -91,16 +163,11 @@ pub async fn create_item(
     .fetch_one(&pool).await
     .map_err(|e| {
         tracing::error!("Error al crear item (POS): {:?}", e);
-        if let Some(db_err) = e.as_database_error() {
-            if db_err.code() == Some(std::borrow::Cow::Borrowed("23505")) {
-                return StatusCode::CONFLICT;
-            }
-        }
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
     enviar_auditoria(user_id, "POS_CREATE_ITEM".to_string(), format!("/inventario/pos/{}", item.id), "N/A".to_string());
-    Ok((StatusCode::CREATED, Json(item)))
+    Ok((StatusCode::CREATED, Json(item)).into_response())
 }
 
 #[utoipa::path(
