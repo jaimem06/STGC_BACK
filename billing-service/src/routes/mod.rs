@@ -14,7 +14,7 @@ use axum::middleware;
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        facturas_handler::registrar_entrada_factura
+        facturas_handler::registrar_movimiento_factura
     ),
     components(
         schemas(crate::models::billing::CreateEntradaFacturaDto)
@@ -27,12 +27,12 @@ struct ApiDoc;
 
 pub fn create_router(pool: PgPool) -> Router {
     let api_routes = Router::new()
-        .route("/facturas/entrada", post(facturas_handler::registrar_entrada_factura))
+        .route("/facturas/movimiento", post(facturas_handler::registrar_movimiento_factura))
         .route_layer(middleware::from_fn(auth_middleware))
         .with_state(pool);
 
     Router::new()
-        .merge(Redoc::with_url("/redoc", ApiDoc::openapi()))
+        .merge(Redoc::with_url("/docs", ApiDoc::openapi()))
         .nest("/api/billing", api_routes)
         .layer(TraceLayer::new_for_http())
 }

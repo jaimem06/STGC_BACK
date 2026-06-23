@@ -39,23 +39,27 @@ fn validate_factura(payload: &CreateEntradaFacturaDto) -> Result<(), String> {
         return Err("La unidad de medida no es válida. Seleccione una de las opciones del catálogo: QUINTALES, ARROBAS, LIBRAS, UNIDADES, LITROS o KILOGRAMOS.".into());
     }
 
+    let tipo = payload.tipo.trim();
+    if tipo.is_empty() { return Err("El tipo de movimiento es obligatorio.".into()); }
+    if tipo != "ENTRADA" && tipo != "SALIDA" { return Err("El tipo de movimiento debe ser ENTRADA o SALIDA.".into()); }
+
     Ok(())
 }
 
 #[utoipa::path(
     post,
-    path = "/billing/facturas/entrada",
+    path = "/billing/facturas/movimiento",
     tag = "Facturación",
     request_body = CreateEntradaFacturaDto,
     security(
         ("bearer_auth" = [])
     ),
     responses(
-        (status = 201, description = "Entrada registrada correctamente"),
+        (status = 201, description = "Movimiento registrado correctamente"),
         (status = 400, description = "Errores de validación")
     )
 )]
-pub async fn registrar_entrada_factura(
+pub async fn registrar_movimiento_factura(
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
     Json(payload): Json<CreateEntradaFacturaDto>,
@@ -112,9 +116,29 @@ pub async fn registrar_entrada_factura(
 
     let mut tx = pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    let is_salida = payload.tipo.trim() == "SALIDA";
+
+    if is_salida {
+        let current_stock = sqlx::query_scalar::<_, f64>("SELECT cantidad FROM inventario_items WHERE id = $1")
+            .bind(payload.item_id).fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        
+        if let Some(stock) = current_stock {
+            if stock < payload.cantidad {
+                tx.rollback().await.ok();
+                return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Stock insuficiente para realizar la salida." }))).into_response());
+            }
+        } else {
+            tx.rollback().await.ok();
+            return Ok((StatusCode::NOT_FOUND, Json(serde_json::json!({ "message": "Producto no encontrado." }))).into_response());
+        }
+    }
+
+    let multiplier = if is_salida { -1.0 } else { 1.0 };
+    let delta = payload.cantidad * multiplier;
+
     let item_updated = sqlx::query!(
         "UPDATE inventario_items SET cantidad = cantidad + $1 WHERE id = $2 RETURNING id",
-        payload.cantidad,
+        delta,
         payload.item_id
     )
     .fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -124,16 +148,25 @@ pub async fn registrar_entrada_factura(
     }
 
     let id_mov = Uuid::new_v4();
-    sqlx::query!(
+    let tipo = payload.tipo.trim();
+    let motivo = if is_salida { "Salida con factura proveedor" } else { "Ingreso con factura proveedor" };
+
+    sqlx::query(
         "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo, numero_factura)
-         VALUES ($1, $2, $3, 'ENTRADA', $4, 'Ingreso con factura proveedor', $5)",
-         id_mov, payload.item_id, payload.cantidad, fecha, payload.numero_factura
+         VALUES ($1, $2, $3, $4::tipo_movimiento, $5, $6, $7)"
     )
+    .bind(id_mov)
+    .bind(payload.item_id)
+    .bind(payload.cantidad)
+    .bind(tipo)
+    .bind(fecha)
+    .bind(motivo)
+    .bind(payload.numero_factura)
     .execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    enviar_auditoria(user_id, "BILLING_REGISTRAR_ENTRADA".to_string(), format!("/billing/facturas/entrada/{}", id_mov), "N/A".to_string());
+    enviar_auditoria(user_id, format!("BILLING_REGISTRAR_{}", tipo), format!("/billing/facturas/movimiento/{}", id_mov), "N/A".to_string());
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "message": "Entrada registrada correctamente.", "id": id_mov }))).into_response())
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "message": format!("{} registrada correctamente.", if is_salida { "Salida" } else { "Entrada" }), "id": id_mov }))).into_response())
 }
