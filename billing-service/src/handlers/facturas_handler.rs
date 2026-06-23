@@ -18,6 +18,10 @@ fn parse_date(date_str: Option<String>) -> Option<DateTime<Utc>> {
     if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S") {
         return Some(Utc.from_utc_datetime(&naive));
     }
+    if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
+        let naive = naive_date.and_hms_opt(0, 0, 0).unwrap();
+        return Some(Utc.from_utc_datetime(&naive));
+    }
     None
 }
 
