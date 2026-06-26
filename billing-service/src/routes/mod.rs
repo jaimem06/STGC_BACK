@@ -20,7 +20,13 @@ use axum::middleware;
         schemas(crate::models::billing::CreateEntradaFacturaDto)
     ),
     tags(
-        (name = "Facturación", description = "API de facturación y asociación con inventario")
+        (name = "Billing Service", description = "Servicio oficial para el manejo de facturación y movimientos de stock (Entradas y Salidas).")
+    ),
+    info(
+        title = "Billing Service API",
+        description = "Documentación técnica y detallada del servicio de facturación (Billing Service) para STGC. Este servicio centraliza el registro de movimientos de inventario que están atados a documentos de respaldo como facturas. Su lógica de negocio incluye validación en tiempo real de disponibilidad de stock, conversiones matemáticas precisas de unidades de medida (p. ej. Libras a Quintales) y el control histórico de las transacciones.",
+        version = "1.0.0",
+        contact(name = "Equipo de Desarrollo STGC")
     )
 )]
 struct ApiDoc;

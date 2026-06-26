@@ -53,14 +53,17 @@ fn validate_factura(payload: &CreateEntradaFacturaDto) -> Result<(), String> {
 #[utoipa::path(
     post,
     path = "/billing/facturas/movimiento",
-    tag = "Facturación",
-    request_body = CreateEntradaFacturaDto,
+    tag = "Billing Service",
+    summary = "Registrar un movimiento con factura (Entrada / Salida)",
+    description = "Este endpoint es el núcleo de las operaciones de inventario con respaldo de facturas. Permite registrar tanto ENTRADAS como SALIDAS de stock. \n\n### Validaciones y Lógica de Negocio:\n- **Conversión de Unidades:** El sistema verifica automáticamente la unidad de medida enviada y la convierte a la unidad base del producto. Por ejemplo, si se envía una salida de 10 Libras pero el producto se almacena en Quintales, el sistema convierte matemáticamente la cantidad antes de afectar el inventario.\n- **Disponibilidad de Stock:** En caso de SALIDAS, el sistema asegura de manera transaccional que exista suficiente stock en la base de datos (después de la conversión de unidades).\n- **Control de Facturas:** Se valida que el número de factura sea único para ese producto específico y cuente exactamente con 17 caracteres alfanuméricos.\n- **Fechas de Caducidad:** Permite establecer y sobrescribir la fecha de caducidad del producto, siendo una funcionalidad crucial para el manejo correcto de productos perecederos.",
+    request_body(content = CreateEntradaFacturaDto, description = "Objeto JSON conteniendo todos los detalles de la factura y el movimiento. Campos obligatorios: `item_id`, `cantidad`, `unidad_medida`, `numero_factura`, `tipo`.", content_type = "application/json"),
     security(
         ("bearer_auth" = [])
     ),
     responses(
-        (status = 201, description = "Movimiento registrado correctamente"),
-        (status = 400, description = "Errores de validación")
+        (status = 201, description = "Movimiento y factura registrados de manera exitosa en el sistema."),
+        (status = 400, description = "Error de validación (p. ej. Stock insuficiente, número de factura inválido o problemas con las unidades de medida)."),
+        (status = 404, description = "Producto no encontrado en la base de datos.")
     )
 )]
 pub async fn registrar_movimiento_factura(
