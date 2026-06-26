@@ -11,7 +11,7 @@ use serde::Deserialize;
 use chrono::{DateTime, Utc, TimeZone};
 use crate::models::{
     InventarioItem, MovimientoStock, CreateInventarioItem, UpdateInventarioItem, 
-    UpdateEstadoDto, CreateMovimientoDto, enums::EstadoInventario
+    UpdateEstadoDto, CreateMovimientoDto, enums::{EstadoInventario, UnidadMedida}
 };
 use crate::utils::audit::enviar_auditoria;
 
@@ -94,6 +94,17 @@ fn validate_create_item(payload: &CreateInventarioItem) -> Result<(), String> {
     if desc.is_empty() { return Err("La descripción del producto es obligatoria.".into()); }
     if desc.len() < 20 || desc.len() > 250 { return Err("La descripción debe tener entre 20 y 250 caracteres.".into()); }
 
+    if let Some(ci) = payload.cantidad_inicial {
+        if ci <= 0.0 { return Err("La cantidad debe ser mayor a 0.".into()); }
+        if ci > 10000.0 { return Err("La cantidad no puede superar 10000.".into()); }
+        let ci_str = ci.to_string();
+        if let Some(pos) = ci_str.find('.') {
+            if ci_str.len() - pos - 1 > 2 {
+                return Err("La cantidad debe ser un número con hasta dos decimales.".into());
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -154,20 +165,56 @@ pub async fn create_item(
         _ => None,
     };
 
+    let cantidad_inicial = payload.cantidad_inicial.unwrap_or(0.0);
+
     let item = sqlx::query_as::<_, InventarioItem>(
         "INSERT INTO inventario_items (id, sku, nombre, cantidad, tipo, estado, unidad_medida, precio, descripcion, fecha_caducidad, modulo, stock_minimo)
-         VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8, $9, 'CAFETERIA', $10)
+         VALUES ($1, $2, $3, $11, $4, $5, $6, $7, $8, $9, 'CAFETERIA', $10)
          RETURNING *"
     )
-    .bind(id).bind(&payload.sku).bind(&payload.nombre).bind(&payload.tipo).bind(&payload.estado).bind(&payload.unidad_medida).bind(payload.precio).bind(&payload.descripcion).bind(fecha).bind(payload.stock_minimo.unwrap_or(0.0))
+    .bind(id).bind(&payload.sku).bind(&payload.nombre).bind(&payload.tipo).bind(&payload.estado).bind(&payload.unidad_medida).bind(payload.precio).bind(&payload.descripcion).bind(fecha).bind(payload.stock_minimo.unwrap_or(0.0)).bind(cantidad_inicial)
     .fetch_one(&pool).await
     .map_err(|e| {
         tracing::error!("Error al crear item (POS): {:?}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
 
+    if cantidad_inicial > 0.0 {
+        let _ = sqlx::query(
+            "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo) VALUES ($1, $2, $3, 'ENTRADA', NOW(), 'Inventario inicial')"
+        )
+        .bind(Uuid::new_v4()).bind(id).bind(cantidad_inicial)
+        .execute(&pool).await;
+    }
+
     enviar_auditoria(user_id, "POS_CREATE_ITEM".to_string(), format!("/inventario/pos/{}", item.id), "N/A".to_string());
     Ok((StatusCode::CREATED, Json(item)).into_response())
+}
+
+fn convert_unit(cantidad: f64, from: &UnidadMedida, to: &UnidadMedida) -> Result<f64, String> {
+    if from == to { return Ok(cantidad); }
+    
+    let is_mass = |u: &UnidadMedida| matches!(u, UnidadMedida::QUINTALES | UnidadMedida::ARROBAS | UnidadMedida::LIBRAS | UnidadMedida::KILOGRAMOS);
+    
+    if is_mass(from) && is_mass(to) {
+        let in_lb = match from {
+            UnidadMedida::LIBRAS => cantidad,
+            UnidadMedida::ARROBAS => cantidad * 25.0,
+            UnidadMedida::QUINTALES => cantidad * 100.0,
+            UnidadMedida::KILOGRAMOS => cantidad * 2.20462,
+            _ => unreachable!(),
+        };
+        let result = match to {
+            UnidadMedida::LIBRAS => in_lb,
+            UnidadMedida::ARROBAS => in_lb / 25.0,
+            UnidadMedida::QUINTALES => in_lb / 100.0,
+            UnidadMedida::KILOGRAMOS => in_lb / 2.20462,
+            _ => unreachable!(),
+        };
+        Ok((result * 100.0).round() / 100.0) // Redondear a 2 decimales
+    } else {
+        Err(format!("No se puede convertir de {:?} a {:?}", from, to))
+    }
 }
 
 #[utoipa::path(
@@ -192,20 +239,91 @@ pub async fn update_item(
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
     Json(payload): Json<UpdateInventarioItem>,
-) -> Result<Json<InventarioItem>, StatusCode> {
-    let fecha = parse_flex_date(payload.fecha_caducidad);
+) -> Result<impl IntoResponse, StatusCode> {
+    if let Some(ref nombre) = payload.nombre {
+        let n = nombre.trim();
+        if n.is_empty() { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El nombre del producto es obligatorio." }))).into_response()); }
+        if n.len() < 3 || n.len() > 90 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El nombre debe tener entre 3 y 90 caracteres." }))).into_response()); }
+
+        let exists_nombre = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM inventario_items WHERE nombre = $1 AND id != $2 AND modulo = 'CAFETERIA'")
+            .bind(n).bind(id).fetch_one(&pool).await.unwrap_or(0);
+        if exists_nombre > 0 {
+            return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Ya existe un producto con este nombre." }))).into_response());
+        }
+    }
+
+    if let Some(ref desc) = payload.descripcion {
+        let d = desc.trim();
+        if d.is_empty() { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "La descripción del producto es obligatoria." }))).into_response()); }
+        if d.len() < 20 || d.len() > 250 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "La descripción debe tener entre 20 y 250 caracteres." }))).into_response()); }
+    }
+
+    if let Some(precio) = payload.precio {
+        if precio == 0.0 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El precio debe ser mayor a 0." }))).into_response()); }
+        if precio < 0.0 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El precio no puede ser negativo." }))).into_response()); }
+        if precio > 10000.0 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El precio no puede superar 10000." }))).into_response()); }
+        let precio_str = precio.to_string();
+        if let Some(pos) = precio_str.find('.') {
+            if precio_str.len() - pos - 1 > 2 {
+                return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El precio solo puede tener hasta dos decimales." }))).into_response());
+            }
+        }
+    }
+
+    if let Some(minimo) = payload.stock_minimo {
+        if minimo < 0.0 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El stock mínimo no puede ser un número negativo." }))).into_response()); }
+        if minimo.fract().abs() > 1e-6 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El stock mínimo debe ser un número entero." }))).into_response()); }
+        if minimo > 30.0 { return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El stock mínimo no puede superar 30." }))).into_response()); }
+    }
+
+    let fecha = match payload.fecha_caducidad {
+        Some(ref fecha_str) if !fecha_str.trim().is_empty() => {
+            if let Some(f) = parse_flex_date(Some(fecha_str.clone())) {
+                let hoy = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap();
+                let hoy_utc = Utc.from_utc_datetime(&hoy);
+                if f < hoy_utc {
+                    return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "La fecha de caducidad no puede ser anterior a la fecha actual." }))).into_response());
+                }
+                Some(f)
+            } else {
+                return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El formato de fecha debe ser AAAA-MM-DD." }))).into_response());
+            }
+        },
+        _ => None,
+    };
+
+    let current_item = sqlx::query_as::<_, InventarioItem>(
+        "SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'CAFETERIA' AND is_deleted = false"
+    ).bind(id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let current_item = match current_item {
+        Some(item) => item,
+        None => return Ok((StatusCode::NOT_FOUND, Json(serde_json::json!({ "message": "Producto no encontrado." }))).into_response()),
+    };
+
+    let mut new_cantidad = current_item.cantidad;
+    if let Some(ref new_um) = payload.unidad_medida {
+        if new_um != &current_item.unidad_medida {
+            new_cantidad = match convert_unit(current_item.cantidad, &current_item.unidad_medida, new_um) {
+                Ok(c) => c,
+                Err(e) => return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": e }))).into_response()),
+            };
+        }
+    }
+
     let item = sqlx::query_as::<_, InventarioItem>(
         "UPDATE inventario_items SET nombre = COALESCE($1, nombre), precio = COALESCE($2, precio), 
          descripcion = COALESCE($3, descripcion), stock_minimo = COALESCE($4, stock_minimo), 
          unidad_medida = COALESCE($5, unidad_medida), fecha_caducidad = COALESCE($6, fecha_caducidad),
+         cantidad = $7,
          updated_at = NOW()
-         WHERE id = $7 AND modulo = 'CAFETERIA' AND is_deleted = false RETURNING *"
+         WHERE id = $8 AND modulo = 'CAFETERIA' AND is_deleted = false RETURNING *"
     )
-    .bind(payload.nombre).bind(payload.precio).bind(payload.descripcion).bind(payload.stock_minimo).bind(payload.unidad_medida).bind(fecha).bind(id)
+    .bind(payload.nombre).bind(payload.precio).bind(payload.descripcion).bind(payload.stock_minimo).bind(payload.unidad_medida).bind(fecha).bind(new_cantidad).bind(id)
     .fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
 
     enviar_auditoria(user_id, "POS_UPDATE_ITEM".to_string(), format!("/inventario/pos/{}", id), "N/A".to_string());
-    Ok(Json(item))
+    Ok(Json(item).into_response())
 }
 
 #[utoipa::path(

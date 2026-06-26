@@ -93,6 +93,10 @@ fn validate_create_item(payload: &CreateInventarioItem) -> Result<(), String> {
     if desc.is_empty() { return Err("La descripción del producto es obligatoria.".into()); }
     if desc.len() < 20 || desc.len() > 250 { return Err("La descripción debe tener entre 20 y 250 caracteres.".into()); }
 
+    if let Some(ci) = payload.cantidad_inicial {
+        if ci < 0.0 { return Err("La cantidad inicial debe ser positiva.".into()); }
+    }
+
     Ok(())
 }
 
@@ -153,17 +157,27 @@ pub async fn create_item(
         _ => None,
     };
 
+    let cantidad_inicial = payload.cantidad_inicial.unwrap_or(0.0);
+
     let item = sqlx::query_as::<_, InventarioItem>(
         "INSERT INTO inventario_items (id, sku, nombre, cantidad, tipo, estado, unidad_medida, precio, descripcion, modulo, stock_minimo, codigo_trazabilidad, calidad, fase_produccion, fecha_caducidad)
-         VALUES ($1, $2, $3, 0, $4, $5, $6, $7, $8, 'FINCA', $9, $10, $11, $12, $13)
+         VALUES ($1, $2, $3, $14, $4, $5, $6, $7, $8, 'FINCA', $9, $10, $11, $12, $13)
          RETURNING *"
     )
-    .bind(id).bind(&payload.sku).bind(&payload.nombre).bind(&payload.tipo).bind(&payload.estado).bind(&payload.unidad_medida).bind(payload.precio).bind(&payload.descripcion).bind(payload.stock_minimo.unwrap_or(0.0)).bind(payload.codigo_trazabilidad).bind(payload.calidad).bind(payload.fase_produccion).bind(fecha)
+    .bind(id).bind(&payload.sku).bind(&payload.nombre).bind(&payload.tipo).bind(&payload.estado).bind(&payload.unidad_medida).bind(payload.precio).bind(&payload.descripcion).bind(payload.stock_minimo.unwrap_or(0.0)).bind(payload.codigo_trazabilidad).bind(payload.calidad).bind(payload.fase_produccion).bind(fecha).bind(cantidad_inicial)
     .fetch_one(&pool).await
     .map_err(|e| {
         tracing::error!("Error al crear item (FINCA): {:?}", e);
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
+
+    if cantidad_inicial > 0.0 {
+        let _ = sqlx::query(
+            "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo) VALUES ($1, $2, $3, 'ENTRADA', NOW(), 'Inventario inicial')"
+        )
+        .bind(Uuid::new_v4()).bind(id).bind(cantidad_inicial)
+        .execute(&pool).await;
+    }
 
     enviar_auditoria(user_id, "FINCA_CREATE_ITEM".to_string(), format!("/inventario/finca/{}", item.id), "N/A".to_string());
     Ok((StatusCode::CREATED, Json(item)).into_response())
@@ -188,6 +202,32 @@ pub async fn get_item(Path(id): Path<Uuid>, State(pool): State<PgPool>) -> Resul
     let item = sqlx::query_as::<_, InventarioItem>("SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false")
         .bind(id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(item))
+}
+
+fn convert_unit(cantidad: f64, from: &crate::models::enums::UnidadMedida, to: &crate::models::enums::UnidadMedida) -> Result<f64, String> {
+    if from == to { return Ok(cantidad); }
+    use crate::models::enums::UnidadMedida;
+    let is_mass = |u: &UnidadMedida| matches!(u, UnidadMedida::QUINTALES | UnidadMedida::ARROBAS | UnidadMedida::LIBRAS | UnidadMedida::KILOGRAMOS);
+    
+    if is_mass(from) && is_mass(to) {
+        let in_lb = match from {
+            UnidadMedida::LIBRAS => cantidad,
+            UnidadMedida::ARROBAS => cantidad * 25.0,
+            UnidadMedida::QUINTALES => cantidad * 100.0,
+            UnidadMedida::KILOGRAMOS => cantidad * 2.20462,
+            _ => unreachable!(),
+        };
+        let result = match to {
+            UnidadMedida::LIBRAS => in_lb,
+            UnidadMedida::ARROBAS => in_lb / 25.0,
+            UnidadMedida::QUINTALES => in_lb / 100.0,
+            UnidadMedida::KILOGRAMOS => in_lb / 2.20462,
+            _ => unreachable!(),
+        };
+        Ok((result * 100.0).round() / 100.0)
+    } else {
+        Err(format!("No se puede convertir de {:?} a {:?}", from, to))
+    }
 }
 
 #[utoipa::path(
@@ -215,7 +255,27 @@ pub async fn update_item(
     Extension(user_id): Extension<String>,
     Json(payload): Json<UpdateInventarioItem>,
 ) -> Result<Json<InventarioItem>, StatusCode> {
-    let fecha = parse_flex_date(payload.fecha_caducidad);
+    let fecha = parse_flex_date(payload.fecha_caducidad.clone());
+    
+    let current_item = sqlx::query_as::<_, InventarioItem>(
+        "SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false"
+    ).bind(id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    let current_item = match current_item {
+        Some(item) => item,
+        None => return Err(StatusCode::NOT_FOUND),
+    };
+
+    let mut new_cantidad = current_item.cantidad;
+    if let Some(ref new_um) = payload.unidad_medida {
+        if new_um != &current_item.unidad_medida {
+            new_cantidad = match convert_unit(current_item.cantidad, &current_item.unidad_medida, new_um) {
+                Ok(c) => c,
+                Err(_) => return Err(StatusCode::BAD_REQUEST),
+            };
+        }
+    }
+
     let item = sqlx::query_as::<_, InventarioItem>(
         "UPDATE inventario_items SET 
             nombre = COALESCE($1, nombre), 
@@ -224,10 +284,11 @@ pub async fn update_item(
             stock_minimo = COALESCE($4, stock_minimo), 
             unidad_medida = COALESCE($5, unidad_medida),
             fecha_caducidad = COALESCE($6, fecha_caducidad),
+            cantidad = $7,
             updated_at = NOW()
-         WHERE id = $7 AND modulo = 'FINCA' AND is_deleted = false RETURNING *"
+         WHERE id = $8 AND modulo = 'FINCA' AND is_deleted = false RETURNING *"
     )
-    .bind(payload.nombre).bind(payload.precio).bind(payload.descripcion).bind(payload.stock_minimo).bind(payload.unidad_medida).bind(fecha).bind(id)
+    .bind(payload.nombre).bind(payload.precio).bind(payload.descripcion).bind(payload.stock_minimo).bind(payload.unidad_medida).bind(fecha).bind(new_cantidad).bind(id)
     .fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
 
     enviar_auditoria(user_id, "FINCA_UPDATE_ITEM".to_string(), format!("/inventario/finca/{}", id), "N/A".to_string());

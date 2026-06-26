@@ -25,6 +25,8 @@ pub struct CreateInventarioItem {
     pub calidad: Option<CalidadCafe>,
     #[serde(default)]
     pub fase_produccion: Option<FaseCafe>,
+    #[serde(default)]
+    pub cantidad_inicial: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
@@ -82,6 +84,7 @@ pub struct MovimientoStock {
     pub motivo: String,
     #[serde(default)]
     pub lote_id: Option<Uuid>,
+    pub numero_factura: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
