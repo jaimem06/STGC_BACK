@@ -10,6 +10,7 @@ pub struct CreateEntradaFacturaDto {
     pub unidad_medida: String,
     pub numero_factura: String,
     pub fecha_entrada: Option<String>,
+    pub fecha_caducidad: Option<String>,
     pub tipo: String,
 }
 

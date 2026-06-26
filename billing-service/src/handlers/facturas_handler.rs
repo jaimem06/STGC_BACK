@@ -122,27 +122,68 @@ pub async fn registrar_movimiento_factura(
 
     let is_salida = payload.tipo.trim() == "SALIDA";
 
-    if is_salida {
-        let current_stock = sqlx::query_scalar::<_, f64>("SELECT cantidad FROM inventario_items WHERE id = $1")
-            .bind(payload.item_id).fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        
-        if let Some(stock) = current_stock {
-            if stock < payload.cantidad {
-                tx.rollback().await.ok();
-                return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Stock insuficiente para realizar la salida." }))).into_response());
-            }
-        } else {
+    let item_data = sqlx::query!("SELECT cantidad, unidad_medida::text FROM inventario_items WHERE id = $1", payload.item_id)
+        .fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let item_data = match item_data {
+        Some(data) => data,
+        None => {
             tx.rollback().await.ok();
             return Ok((StatusCode::NOT_FOUND, Json(serde_json::json!({ "message": "Producto no encontrado." }))).into_response());
         }
+    };
+
+    let item_um = item_data.unidad_medida.unwrap_or_else(|| "LIBRAS".to_string());
+    
+    let is_mass = |u: &str| matches!(u, "QUINTALES" | "ARROBAS" | "LIBRAS" | "KILOGRAMOS");
+    let converted_cantidad = if payload.unidad_medida == item_um {
+        payload.cantidad
+    } else if is_mass(&payload.unidad_medida) && is_mass(&item_um) {
+        let in_lb = match payload.unidad_medida.as_str() {
+            "LIBRAS" => payload.cantidad,
+            "ARROBAS" => payload.cantidad * 25.0,
+            "QUINTALES" => payload.cantidad * 100.0,
+            "KILOGRAMOS" => payload.cantidad * 2.20462,
+            _ => unreachable!(),
+        };
+        let result = match item_um.as_str() {
+            "LIBRAS" => in_lb,
+            "ARROBAS" => in_lb / 25.0,
+            "QUINTALES" => in_lb / 100.0,
+            "KILOGRAMOS" => in_lb / 2.20462,
+            _ => unreachable!(),
+        };
+        (result * 100.0).round() / 100.0
+    } else {
+        tx.rollback().await.ok();
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": format!("No se puede convertir de {} a {}", payload.unidad_medida, item_um) }))).into_response());
+    };
+
+    if is_salida {
+        if item_data.cantidad < converted_cantidad {
+            tx.rollback().await.ok();
+            return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Stock insuficiente para realizar la salida." }))).into_response());
+        }
     }
 
+    let fecha_caducidad_parsed = match payload.fecha_caducidad {
+        Some(ref f) if !f.trim().is_empty() => {
+            if let Some(dt) = parse_date(Some(f.clone())) {
+                Some(dt)
+            } else {
+                return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El formato de fecha de caducidad no es válido." }))).into_response());
+            }
+        },
+        _ => None,
+    };
+
     let multiplier = if is_salida { -1.0 } else { 1.0 };
-    let delta = payload.cantidad * multiplier;
+    let delta = converted_cantidad * multiplier;
 
     let item_updated = sqlx::query!(
-        "UPDATE inventario_items SET cantidad = cantidad + $1 WHERE id = $2 RETURNING id",
+        "UPDATE inventario_items SET cantidad = cantidad + $1, fecha_caducidad = COALESCE($2, fecha_caducidad) WHERE id = $3 RETURNING id",
         delta,
+        fecha_caducidad_parsed,
         payload.item_id
     )
     .fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -161,7 +202,7 @@ pub async fn registrar_movimiento_factura(
     )
     .bind(id_mov)
     .bind(payload.item_id)
-    .bind(payload.cantidad)
+    .bind(converted_cantidad)
     .bind(tipo)
     .bind(fecha)
     .bind(motivo)
