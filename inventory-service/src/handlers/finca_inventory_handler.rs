@@ -149,7 +149,7 @@ fn validate_create_item(payload: &CreateInventarioItem) -> Result<(), String> {
     path = "/inventario/finca/nuevo",
     tag = "Inventario Finca",
     request_body = CreateInventarioItem,
-    security("bearer_auth" = []),
+    security(("bearer_auth" = [])),
     responses(
         (status = 201, description = "Ítem de finca creado exitosamente", body = InventarioItem),
         (status = 400, description = "Datos de entrada mal formados"),
@@ -362,7 +362,7 @@ fn convert_unit(
     tag = "Inventario Finca",
     params(("id" = Uuid, Path, description = "UUID del ítem a modificar")),
     request_body = UpdateInventarioItem,
-    security("bearer_auth" = []),
+    security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "Información actualizada exitosamente", body = InventarioItem),
         (status = 400, description = "Error en el formato de actualización"),
@@ -450,7 +450,7 @@ pub async fn update_item(
     tag = "Inventario Finca",
     params(("id" = Uuid, Path, description = "ID del ítem")),
     request_body = UpdateEstadoDto,
-    security("bearer_auth" = []),
+    security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "Estado actualizado", body = InventarioItem),
         (status = 400, description = "Estado no válido para flujo de finca"),
@@ -521,7 +521,7 @@ pub async fn delete_item(
     path = "/inventario/finca/movimientos",
     tag = "Inventario Finca",
     request_body = CreateMovimientoDto,
-    security("bearer_auth" = []),
+    security(("bearer_auth" = [])),
     responses(
         (
             status = 201,
@@ -661,7 +661,7 @@ pub async fn list_movements(
     path = "/inventario/finca/movimientos/exportar",
     tag = "Inventario Finca",
     params(MovementFilter),
-    security("bearer_auth" = []),
+    security(("bearer_auth" = [])),
     responses(
         (
             status = 200,
