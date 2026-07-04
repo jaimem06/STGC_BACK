@@ -4,11 +4,9 @@ use std::env;
 use std::net::SocketAddr;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod handlers;
-mod middleware;
-mod models;
-mod routes;
-mod utils;
+// Los módulos viven ahora en la librería del crate (src/lib.rs) para poder
+// ser reutilizados por los tests de integración. El binario los consume desde allí.
+use inventory_service::routes;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

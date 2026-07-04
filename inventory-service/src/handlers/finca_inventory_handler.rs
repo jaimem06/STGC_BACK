@@ -570,7 +570,7 @@ pub async fn create_movement(
 
     sqlx
         ::query(
-            "UPDATE inventario_items SET cantidad = $1, estado = $2, actualizado_en = NOW() WHERE id = $3"
+            "UPDATE inventario_items SET cantidad = $1, estado = $2, updated_at = NOW() WHERE id = $3"
         )
         .bind(nueva_cantidad)
         .bind(nuevo_estado)
