@@ -22,6 +22,10 @@ pub fn enviar_auditoria(user_id: String, action: String, endpoint: String, ip: S
     };
 
     tokio::spawn(async move {
+        // Respaldo duro: si el servicio de auditoría no responde, dejamos constancia
+        // del payload completo en los logs de STDOUT para no perder la traza.
+        let fallback = serde_json::to_string(&payload).unwrap_or_default();
+
         let client = reqwest::Client::new();
         let res = client
             .post(&audit_endpoint)
@@ -33,11 +37,15 @@ pub fn enviar_auditoria(user_id: String, action: String, endpoint: String, ip: S
         match res {
             Ok(response) => {
                 if !response.status().is_success() {
-                    tracing::error!("Error enviando auditoría: Status {}", response.status());
+                    tracing::error!(
+                        "Error enviando auditoría: Status {}. Payload: {}",
+                        response.status(),
+                        fallback
+                    );
                 }
             }
             Err(e) => {
-                tracing::error!("Error enviando auditoría: {}", e);
+                tracing::error!("Error enviando auditoría: {}. Payload: {}", e, fallback);
             }
         }
     });

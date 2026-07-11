@@ -49,7 +49,20 @@ pub async fn auth_middleware(
         StatusCode::UNAUTHORIZED
     })?;
 
-    req.extensions_mut().insert(token_data.claims.sub);
-    
+    // Guardamos el user_id (sub) para los handlers y los Claims completos para RBAC.
+    req.extensions_mut().insert(token_data.claims.sub.clone());
+    req.extensions_mut().insert(token_data.claims.clone());
+
     Ok(next.run(req).await)
+}
+
+/// Extractor opcional para control de acceso por rol (RBAC).
+///
+/// Se provee disponible pero NO se cablea a los endpoints por defecto: los roles
+/// del sistema aún no están mapeados y forzarlo bloquearía usuarios legítimos.
+/// Para activarlo en un handler basta con añadir `RequireRole(vec!["ADMIN".into()])`
+/// como parámetro y comparar contra `Claims.role`.
+#[allow(dead_code)]
+pub fn tiene_rol(claims: &Claims, roles_permitidos: &[&str]) -> bool {
+    roles_permitidos.iter().any(|r| r.eq_ignore_ascii_case(&claims.role))
 }

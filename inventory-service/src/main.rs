@@ -37,6 +37,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Fallo al ejecutar las migraciones de base de datos");
     tracing::info!("Migraciones completadas exitosamente.");
 
+    // HU025: tarea programada que marca como CADUCADO los ítems cuya fecha de
+    // caducidad ya venció. Corre al arranque y luego cada hora.
+    let caducidad_pool = pool.clone();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(std::time::Duration::from_secs(3600));
+        loop {
+            ticker.tick().await;
+            // Registrar en la bitácora antes de sobrescribir el estado.
+            let _ = sqlx::query(
+                "INSERT INTO historial_estados (item_id, estado_anterior, estado_nuevo, motivo, usuario_id)
+                 SELECT id, estado, 'CADUCADO', 'Caducidad automática', 'SYSTEM'
+                 FROM inventario_items
+                 WHERE fecha_caducidad < NOW() AND estado <> 'CADUCADO' AND is_deleted = false",
+            )
+            .execute(&caducidad_pool)
+            .await;
+
+            match sqlx::query(
+                "UPDATE inventario_items SET estado = 'CADUCADO', updated_at = NOW()
+                 WHERE fecha_caducidad < NOW() AND estado <> 'CADUCADO' AND is_deleted = false",
+            )
+            .execute(&caducidad_pool)
+            .await
+            {
+                Ok(res) if res.rows_affected() > 0 => {
+                    tracing::info!("Job CADUCADO: {} ítem(s) marcados como caducados.", res.rows_affected());
+                }
+                Ok(_) => {}
+                Err(e) => tracing::error!("Job CADUCADO falló: {:?}", e),
+            }
+        }
+    });
+
     // Crear el router
     let app = routes::create_router(pool);
 

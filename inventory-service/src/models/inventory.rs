@@ -67,11 +67,17 @@ pub struct UpdateInventarioItem {
     pub unidad_medida: Option<UnidadMedida>,
     #[serde(default)]
     pub fecha_caducidad: Option<String>,
+    /// Motivo del cambio de precio (HU019). Se registra en historial_precios si el precio cambia.
+    #[serde(default)]
+    pub motivo: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct UpdateEstadoDto {
     pub estado: EstadoInventario,
+    /// Motivo del cambio manual de estado (HU025). Se registra en historial_estados.
+    #[serde(default)]
+    pub motivo: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
@@ -95,16 +101,53 @@ pub struct CreateMovimientoDto {
     pub motivo: String,
     #[serde(default)]
     pub lote_id: Option<Uuid>,
+    /// Número de factura/documento asociado a la entrada (HU021, EC-04).
+    #[serde(default)]
+    pub numero_factura: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-#[allow(dead_code)]
+#[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
 pub struct AlertaStock {
     pub item_id: Uuid,
     pub nombre: String,
     pub cantidad_actual: f64,
     pub stock_minimo: f64,
     pub mensaje: String,
+}
+
+/// Registro histórico de cambios de precio (HU019).
+#[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+pub struct HistorialPrecio {
+    pub id: Uuid,
+    pub item_id: Uuid,
+    pub precio_anterior: f64,
+    pub precio_nuevo: f64,
+    pub motivo: Option<String>,
+    pub usuario_id: Option<String>,
+    pub fecha_cambio: DateTime<Utc>,
+}
+
+/// Registro histórico de cambios de estado (HU025).
+#[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+pub struct HistorialEstado {
+    pub id: Uuid,
+    pub item_id: Uuid,
+    pub estado_anterior: EstadoInventario,
+    pub estado_nuevo: EstadoInventario,
+    pub motivo: Option<String>,
+    pub usuario_id: Option<String>,
+    pub fecha: DateTime<Utc>,
+}
+
+/// Métricas consolidadas de inventario para el dashboard (HU028).
+#[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]
+pub struct StockStats {
+    pub total_items: i64,
+    pub disponibles: i64,
+    pub stock_bajo: i64,
+    pub agotados: i64,
+    pub valor_total: f64,
+    pub num_lotes: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, sqlx::FromRow)]

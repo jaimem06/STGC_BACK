@@ -38,6 +38,7 @@ use crate::models::*;
         schemas(
             InventarioItem, CreateInventarioItem, UpdateInventarioItem, UpdateEstadoDto,
             MovimientoStock, CreateMovimientoDto, Proveedor, LoteCafe,
+            HistorialPrecio, HistorialEstado, AlertaStock, StockStats,
             EstadoInventario, TipoElemento, UnidadMedida, CalidadCafe,
             ClasificacionInsumo, FaseCafe, TipoMovimiento, ModuloInventario
         )
@@ -79,20 +80,32 @@ pub fn create_router(pool: PgPool) -> Router {
         // --- Inventario Modulo 2 ---
         .route("/inventario/pos", get(pos_inventory_handler::list_items))
         .route("/inventario/pos/nuevo", post(pos_inventory_handler::create_item))
+        .route("/inventario/pos/eliminados", get(pos_inventory_handler::list_deleted))
+        .route("/inventario/pos/alertas-stock", get(pos_inventory_handler::list_alertas_stock))
+        .route("/inventario/pos/stats", get(pos_inventory_handler::get_stats))
         .route("/inventario/pos/movimientos", post(pos_inventory_handler::create_movement))
         .route("/inventario/pos/movimientos/exportar", get(pos_inventory_handler::export_all_movements_csv))
         .route("/inventario/pos/:id", get(pos_inventory_handler::get_item).put(pos_inventory_handler::update_item).delete(pos_inventory_handler::delete_item))
         .route("/inventario/pos/:id/estado", patch(pos_inventory_handler::update_status))
+        .route("/inventario/pos/:id/restaurar", patch(pos_inventory_handler::restore_item))
         .route("/inventario/pos/:id/movimientos", get(pos_inventory_handler::list_movements))
+        .route("/inventario/pos/:id/historial-precios", get(pos_inventory_handler::list_price_history))
+        .route("/inventario/pos/:id/historial-estados", get(pos_inventory_handler::list_status_history))
 
         // --- INVENTARIO FINCA ---
         .route("/inventario/finca", get(finca_inventory_handler::list_items))
         .route("/inventario/finca/nuevo", post(finca_inventory_handler::create_item))
+        .route("/inventario/finca/eliminados", get(finca_inventory_handler::list_deleted))
+        .route("/inventario/finca/alertas-stock", get(finca_inventory_handler::list_alertas_stock))
+        .route("/inventario/finca/stats", get(finca_inventory_handler::get_stats))
         .route("/inventario/finca/movimientos", post(finca_inventory_handler::create_movement))
         .route("/inventario/finca/movimientos/exportar", get(finca_inventory_handler::export_all_movements_csv))
         .route("/inventario/finca/:id", get(finca_inventory_handler::get_item).put(finca_inventory_handler::update_item).delete(finca_inventory_handler::delete_item))
         .route("/inventario/finca/:id/estado", patch(finca_inventory_handler::update_status))
+        .route("/inventario/finca/:id/restaurar", patch(finca_inventory_handler::restore_item))
         .route("/inventario/finca/:id/movimientos", get(finca_inventory_handler::list_movements))
+        .route("/inventario/finca/:id/historial-precios", get(finca_inventory_handler::list_price_history))
+        .route("/inventario/finca/:id/historial-estados", get(finca_inventory_handler::list_status_history))
 
         // --- TRAZABILIDAD ---
         .route("/trazabilidad/lotes", get(traceability_handler::list_lots))

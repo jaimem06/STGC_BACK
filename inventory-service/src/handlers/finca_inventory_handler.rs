@@ -8,7 +8,7 @@ use axum::{
 use uuid::Uuid;
 use sqlx::PgPool;
 use serde::Deserialize;
-use chrono::{ DateTime, Utc, TimeZone };
+use chrono::Utc;
 use crate::models::{
     InventarioItem,
     MovimientoStock,
@@ -16,9 +16,16 @@ use crate::models::{
     UpdateInventarioItem,
     UpdateEstadoDto,
     CreateMovimientoDto,
-    enums::EstadoInventario,
+    HistorialPrecio,
+    HistorialEstado,
+    AlertaStock,
+    StockStats,
 };
 use crate::utils::audit::enviar_auditoria;
+use crate::utils::inventory_helpers::{
+    convert_unit, determinar_estado_inventario, parse_flex_date, validar_transicion_estado,
+    validate_create_item, validate_update_item,
+};
 
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct MovementFilter {
@@ -26,122 +33,39 @@ pub struct MovementFilter {
     pub end_date: Option<String>,
 }
 
-fn parse_flex_date(date_str: Option<String>) -> Option<DateTime<Utc>> {
-    let s = date_str?.trim().to_string();
-    if s.is_empty() || s == "null" {
-        return None;
-    }
-    if let Ok(dt) = DateTime::parse_from_rfc3339(&s) {
-        return Some(dt.with_timezone(&Utc));
-    }
-    if let Ok(naive_date) = chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
-        return naive_date.and_hms_opt(0, 0, 0).map(|dt| Utc.from_utc_datetime(&dt));
-    }
-    None
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct ListQuery {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
 }
 
 #[utoipa::path(
     get,
     path = "/inventario/finca",
     tag = "Inventario Finca",
+    params(ListQuery),
     responses(
-        (
-            status = 200,
-            description = "Catálogo de insumos y productos de producción recuperado",
-            body = [InventarioItem],
-        ),
+        (status = 200, description = "Catálogo de insumos y productos de producción recuperado", body = [InventarioItem]),
         (status = 401, description = "No autorizado: Requiere token Bearer válido"),
-        (status = 403, description = "Prohibido: Rol insuficiente para acceder a datos de finca"),
-        (status = 500, description = "Error interno al consultar la base de datos"),
-        (status = 503, description = "Servicio de base de datos no disponible")
+        (status = 500, description = "Error interno al consultar la base de datos")
     ),
     summary = "Listar ítems de producción (Finca)",
-    description = "Obtiene todos los elementos del inventario pertenecientes al módulo de Finca. Incluye insumos agrícolas y café en sus diferentes fases."
+    description = "Obtiene los elementos del inventario del módulo de Finca con paginación opcional."
 )]
-pub async fn list_items(State(pool): State<PgPool>) -> Result<
-    Json<Vec<InventarioItem>>,
-    StatusCode
-> {
+pub async fn list_items(
+    State(pool): State<PgPool>,
+    Query(q): Query<ListQuery>,
+) -> Result<Json<Vec<InventarioItem>>, StatusCode> {
     let items = sqlx
         ::query_as::<_, InventarioItem>(
-            "SELECT * FROM inventario_items WHERE modulo = 'FINCA' AND is_deleted = false ORDER BY created_at DESC"
+            "SELECT * FROM inventario_items WHERE modulo = 'FINCA' AND is_deleted = false \
+             ORDER BY created_at DESC LIMIT $1 OFFSET COALESCE($2, 0)"
         )
+        .bind(q.limit)
+        .bind(q.offset)
         .fetch_all(&pool).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(items))
-}
-
-fn validate_create_item(payload: &CreateInventarioItem) -> Result<(), String> {
-    let nombre = payload.nombre.trim();
-    if nombre.is_empty() {
-        return Err("El nombre del producto es obligatorio.".into());
-    }
-    if nombre.len() < 3 || nombre.len() > 90 {
-        return Err("El nombre debe tener entre 3 y 90 caracteres.".into());
-    }
-
-    let sku = payload.sku.trim();
-    if sku.is_empty() {
-        return Err("El SKU es obligatorio.".into());
-    }
-    if sku.len() != 6 {
-        return Err("El SKU debe tener exactamente 6 caracteres.".into());
-    }
-    let chars: Vec<char> = sku.chars().collect();
-    if !sku.chars().all(|c| (c.is_ascii_uppercase() || c.is_ascii_digit())) {
-        return Err("El SKU solo puede contener letras mayúsculas y números.".into());
-    }
-    let has_3_upper = chars[0..3].iter().all(|c| c.is_ascii_uppercase());
-    let has_3_digits = chars[3..6].iter().all(|c| c.is_ascii_digit());
-    if !has_3_upper || !has_3_digits {
-        return Err("El SKU debe tener 3 letras mayúsculas seguidas de 3 números.".into());
-    }
-
-    if payload.precio == 0.0 {
-        return Err("El precio debe ser mayor a 0.".into());
-    }
-    if payload.precio < 0.0 {
-        return Err("El precio no puede ser negativo.".into());
-    }
-    if payload.precio > 10000.0 {
-        return Err("El precio no puede superar 10000.".into());
-    }
-    let precio_str = payload.precio.to_string();
-    if let Some(pos) = precio_str.find('.') {
-        if precio_str.len() - pos - 1 > 2 {
-            return Err("El precio solo puede tener hasta dos decimales.".into());
-        }
-    }
-
-    if payload.stock_minimo.is_none() {
-        return Err("El stock mínimo es obligatorio.".into());
-    }
-    let minimo = payload.stock_minimo.unwrap();
-    if minimo < 0.0 {
-        return Err("El stock mínimo no puede ser un número negativo.".into());
-    }
-    if minimo.fract().abs() > 1e-6 {
-        return Err("El stock mínimo debe ser un número entero.".into());
-    }
-    if minimo > 30.0 {
-        return Err("El stock mínimo no puede superar 30.".into());
-    }
-
-    let desc = payload.descripcion.as_deref().unwrap_or("").trim();
-    if desc.is_empty() {
-        return Err("La descripción del producto es obligatoria.".into());
-    }
-    if desc.len() < 20 || desc.len() > 250 {
-        return Err("La descripción debe tener entre 20 y 250 caracteres.".into());
-    }
-
-    if let Some(ci) = payload.cantidad_inicial {
-        if ci < 0.0 {
-            return Err("La cantidad inicial debe ser positiva.".into());
-        }
-    }
-
-    Ok(())
 }
 
 #[utoipa::path(
@@ -154,11 +78,10 @@ fn validate_create_item(payload: &CreateInventarioItem) -> Result<(), String> {
         (status = 201, description = "Ítem de finca creado exitosamente", body = InventarioItem),
         (status = 400, description = "Datos de entrada mal formados"),
         (status = 401, description = "Autenticación requerida"),
-        (status = 409, description = "Error: El código SKU o Nombre ya existe en el sistema"),
-        (status = 422, description = "Faltan campos obligatorios o formato inválido")
+        (status = 409, description = "Error: El código SKU o Nombre ya existe en el sistema")
     ),
     summary = "Registrar nuevo ítem de finca",
-    description = "Crea un nuevo registro en el inventario forzando el módulo a 'FINCA'. Permite asociar códigos de trazabilidad y fases de procesamiento."
+    description = "Crea un nuevo registro en el inventario forzando el módulo a 'FINCA'."
 )]
 pub async fn create_item(
     State(pool): State<PgPool>,
@@ -166,41 +89,27 @@ pub async fn create_item(
     Json(payload): Json<CreateInventarioItem>
 ) -> Result<impl IntoResponse, StatusCode> {
     if let Err(msg) = validate_create_item(&payload) {
-        return Ok(
-            (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": msg }))).into_response()
-        );
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": msg }))).into_response());
     }
 
+    // EC-05: SKU único globalmente.
     let exists_sku = sqlx
-        ::query_scalar::<_, i64>(
-            "SELECT count(*) FROM inventario_items WHERE sku = $1 AND modulo = 'FINCA'"
-        )
-        .bind(&payload.sku)
+        ::query_scalar::<_, i64>("SELECT count(*) FROM inventario_items WHERE sku = $1")
+        .bind(payload.sku.trim())
         .fetch_one(&pool).await
         .unwrap_or(0);
     if exists_sku > 0 {
-        return Ok(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "message": "Ya existe un producto con este SKU." })),
-            ).into_response()
-        );
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Ya existe un producto con este SKU." }))).into_response());
     }
 
+    // HU023: unicidad de nombre comparando el valor trimeado.
     let exists_nombre = sqlx
-        ::query_scalar::<_, i64>(
-            "SELECT count(*) FROM inventario_items WHERE nombre = $1 AND modulo = 'FINCA'"
-        )
-        .bind(&payload.nombre)
+        ::query_scalar::<_, i64>("SELECT count(*) FROM inventario_items WHERE nombre = $1 AND modulo = 'FINCA'")
+        .bind(payload.nombre.trim())
         .fetch_one(&pool).await
         .unwrap_or(0);
     if exists_nombre > 0 {
-        return Ok(
-            (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "message": "Ya existe un producto con este nombre." })),
-            ).into_response()
-        );
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Ya existe un producto con este nombre." }))).into_response());
     }
 
     let id = Uuid::new_v4();
@@ -209,27 +118,13 @@ pub async fn create_item(
         Some(ref fecha_str) if !fecha_str.trim().is_empty() => {
             if let Some(f) = parse_flex_date(Some(fecha_str.clone())) {
                 let hoy = Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap();
-                let hoy_utc = Utc.from_utc_datetime(&hoy);
+                let hoy_utc = chrono::TimeZone::from_utc_datetime(&Utc, &hoy);
                 if f < hoy_utc {
-                    return Ok(
-                        (
-                            StatusCode::BAD_REQUEST,
-                            Json(
-                                serde_json::json!({ "message": "La fecha de caducidad no puede ser anterior a la fecha actual." })
-                            ),
-                        ).into_response()
-                    );
+                    return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "La fecha de caducidad no puede ser anterior a la fecha actual." }))).into_response());
                 }
                 Some(f)
             } else {
-                return Ok(
-                    (
-                        StatusCode::BAD_REQUEST,
-                        Json(
-                            serde_json::json!({ "message": "El formato de fecha debe ser AAAA-MM-DD." })
-                        ),
-                    ).into_response()
-                );
+                return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "El formato de fecha debe ser AAAA-MM-DD." }))).into_response());
             }
         }
         _ => None,
@@ -244,8 +139,8 @@ pub async fn create_item(
          RETURNING *"
         )
         .bind(id)
-        .bind(&payload.sku)
-        .bind(&payload.nombre)
+        .bind(payload.sku.trim())
+        .bind(payload.nombre.trim())
         .bind(&payload.tipo)
         .bind(&payload.estado)
         .bind(&payload.unidad_medida)
@@ -266,20 +161,16 @@ pub async fn create_item(
     if cantidad_inicial > 0.0 {
         let _ = sqlx
             ::query(
-                "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo) VALUES ($1, $2, $3, 'ENTRADA', NOW(), 'Inventario inicial')"
+                "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo, usuario_id) VALUES ($1, $2, $3, 'ENTRADA', NOW(), 'Inventario inicial', $4)"
             )
             .bind(Uuid::new_v4())
             .bind(id)
             .bind(cantidad_inicial)
+            .bind(&user_id)
             .execute(&pool).await;
     }
 
-    enviar_auditoria(
-        user_id,
-        "FINCA_CREATE_ITEM".to_string(),
-        format!("/inventario/finca/{}", item.id),
-        "N/A".to_string()
-    );
+    enviar_auditoria(user_id, "FINCA_CREATE_ITEM".to_string(), format!("/inventario/finca/{}", item.id), "N/A".to_string());
     Ok((StatusCode::CREATED, Json(item)).into_response())
 }
 
@@ -289,18 +180,11 @@ pub async fn create_item(
     tag = "Inventario Finca",
     params(("id" = Uuid, Path, description = "UUID único del ítem")),
     responses(
-        (
-            status = 200,
-            description = "Detalle del ítem obtenido correctamente",
-            body = InventarioItem,
-        ),
-        (status = 401, description = "No autorizado"),
-        (status = 404, description = "El ítem no existe en el módulo de finca"),
-        (status = 500, description = "Error interno del servidor"),
-        (status = 503, description = "Servicio no disponible")
+        (status = 200, description = "Detalle del ítem obtenido correctamente", body = InventarioItem),
+        (status = 404, description = "El ítem no existe en el módulo de finca")
     ),
     summary = "Obtener detalle de ítem de finca",
-    description = "Recupera la ficha técnica completa de un producto o insumo de la finca, incluyendo datos de trazabilidad si existen."
+    description = "Recupera la ficha técnica completa de un producto o insumo de la finca."
 )]
 pub async fn get_item(
     Path(id): Path<Uuid>,
@@ -317,45 +201,6 @@ pub async fn get_item(
     Ok(Json(item))
 }
 
-fn convert_unit(
-    cantidad: f64,
-    from: &crate::models::enums::UnidadMedida,
-    to: &crate::models::enums::UnidadMedida
-) -> Result<f64, String> {
-    if from == to {
-        return Ok(cantidad);
-    }
-    use crate::models::enums::UnidadMedida;
-    let is_mass = |u: &UnidadMedida|
-        matches!(
-            u,
-            UnidadMedida::QUINTALES |
-                UnidadMedida::ARROBAS |
-                UnidadMedida::LIBRAS |
-                UnidadMedida::KILOGRAMOS
-        );
-
-    if is_mass(from) && is_mass(to) {
-        let in_lb = match from {
-            UnidadMedida::LIBRAS => cantidad,
-            UnidadMedida::ARROBAS => cantidad * 25.0,
-            UnidadMedida::QUINTALES => cantidad * 100.0,
-            UnidadMedida::KILOGRAMOS => cantidad * 2.20462,
-            _ => unreachable!(),
-        };
-        let result = match to {
-            UnidadMedida::LIBRAS => in_lb,
-            UnidadMedida::ARROBAS => in_lb / 25.0,
-            UnidadMedida::QUINTALES => in_lb / 100.0,
-            UnidadMedida::KILOGRAMOS => in_lb / 2.20462,
-            _ => unreachable!(),
-        };
-        Ok((result * 100.0).round() / 100.0)
-    } else {
-        Err(format!("No se puede convertir de {:?} a {:?}", from, to))
-    }
-}
-
 #[utoipa::path(
     put,
     path = "/inventario/finca/{id}",
@@ -366,19 +211,32 @@ fn convert_unit(
     responses(
         (status = 200, description = "Información actualizada exitosamente", body = InventarioItem),
         (status = 400, description = "Error en el formato de actualización"),
-        (status = 401, description = "Acceso denegado"),
-        (status = 404, description = "Ítem no encontrado o pertenece a otro módulo"),
-        (status = 500, description = "Fallo al escribir en la base de datos")
+        (status = 404, description = "Ítem no encontrado"),
+        (status = 409, description = "Nombre duplicado")
     ),
-    summary = "Actualizar atributos del ítem",
-    description = "Modifica los metadatos de un producto de finca. No altera el stock físico (use el endpoint de movimientos)."
+    summary = "Actualizar atributos del ítem (Finca)",
+    description = "Modifica los metadatos de un producto de finca aplicando validaciones (HU023)."
 )]
 pub async fn update_item(
     Path(id): Path<Uuid>,
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
     Json(payload): Json<UpdateInventarioItem>
-) -> Result<Json<InventarioItem>, StatusCode> {
+) -> Result<impl IntoResponse, StatusCode> {
+    // HU023: Finca ahora aplica la misma batería de validaciones que POS.
+    if let Err(msg) = validate_update_item(&payload) {
+        return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": msg }))).into_response());
+    }
+
+    if let Some(ref nombre) = payload.nombre {
+        let n = nombre.trim();
+        let exists_nombre = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM inventario_items WHERE nombre = $1 AND id != $2 AND modulo = 'FINCA'")
+            .bind(n).bind(id).fetch_one(&pool).await.unwrap_or(0);
+        if exists_nombre > 0 {
+            return Ok((StatusCode::CONFLICT, Json(serde_json::json!({ "message": "Ya existe un producto con este nombre." }))).into_response());
+        }
+    }
+
     let fecha = parse_flex_date(payload.fecha_caducidad.clone());
 
     let current_item = sqlx
@@ -391,39 +249,48 @@ pub async fn update_item(
 
     let current_item = match current_item {
         Some(item) => item,
-        None => {
-            return Err(StatusCode::NOT_FOUND);
-        }
+        None => return Ok((StatusCode::NOT_FOUND, Json(serde_json::json!({ "message": "Producto no encontrado." }))).into_response()),
     };
 
     let mut new_cantidad = current_item.cantidad;
     if let Some(ref new_um) = payload.unidad_medida {
         if new_um != &current_item.unidad_medida {
-            new_cantidad = match
-                convert_unit(current_item.cantidad, &current_item.unidad_medida, new_um)
-            {
+            new_cantidad = match convert_unit(current_item.cantidad, &current_item.unidad_medida, new_um) {
                 Ok(c) => c,
-                Err(_) => {
-                    return Err(StatusCode::BAD_REQUEST);
-                }
+                Err(e) => return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": e }))).into_response()),
             };
+        }
+    }
+
+    let nombre_trim = payload.nombre.as_ref().map(|n| n.trim().to_string());
+
+    let mut tx = pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // HU019: bitácora de precio.
+    if let Some(nuevo_precio) = payload.precio {
+        if (nuevo_precio - current_item.precio).abs() > f64::EPSILON {
+            sqlx::query(
+                "INSERT INTO historial_precios (item_id, precio_anterior, precio_nuevo, motivo, usuario_id) VALUES ($1, $2, $3, $4, $5)"
+            )
+            .bind(id).bind(current_item.precio).bind(nuevo_precio).bind(&payload.motivo).bind(&user_id)
+            .execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         }
     }
 
     let item = sqlx
         ::query_as::<_, InventarioItem>(
-            "UPDATE inventario_items SET 
-            nombre = COALESCE($1, nombre), 
-            precio = COALESCE($2, precio), 
-            descripcion = COALESCE($3, descripcion), 
-            stock_minimo = COALESCE($4, stock_minimo), 
+            "UPDATE inventario_items SET
+            nombre = COALESCE($1, nombre),
+            precio = COALESCE($2, precio),
+            descripcion = COALESCE($3, descripcion),
+            stock_minimo = COALESCE($4, stock_minimo),
             unidad_medida = COALESCE($5, unidad_medida),
             fecha_caducidad = COALESCE($6, fecha_caducidad),
             cantidad = $7,
             updated_at = NOW()
          WHERE id = $8 AND modulo = 'FINCA' AND is_deleted = false RETURNING *"
         )
-        .bind(payload.nombre)
+        .bind(nombre_trim)
         .bind(payload.precio)
         .bind(payload.descripcion)
         .bind(payload.stock_minimo)
@@ -431,17 +298,18 @@ pub async fn update_item(
         .bind(fecha)
         .bind(new_cantidad)
         .bind(id)
-        .fetch_optional(&pool).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+        .fetch_optional(&mut *tx).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    enviar_auditoria(
-        user_id,
-        "FINCA_UPDATE_ITEM".to_string(),
-        format!("/inventario/finca/{}", id),
-        "N/A".to_string()
-    );
-    Ok(Json(item))
+    let item = match item {
+        Some(i) => i,
+        None => return Ok((StatusCode::NOT_FOUND, Json(serde_json::json!({ "message": "Producto no encontrado." }))).into_response()),
+    };
+
+    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    enviar_auditoria(user_id, "FINCA_UPDATE_ITEM".to_string(), format!("/inventario/finca/{}", id), "N/A".to_string());
+    Ok(Json(item).into_response())
 }
 
 #[utoipa::path(
@@ -453,38 +321,52 @@ pub async fn update_item(
     security(("bearer_auth" = [])),
     responses(
         (status = 200, description = "Estado actualizado", body = InventarioItem),
-        (status = 400, description = "Estado no válido para flujo de finca"),
-        (status = 401, description = "No autorizado"),
         (status = 404, description = "Ítem no encontrado"),
-        (status = 422, description = "Error de validación de esquema")
+        (status = 422, description = "Transición de estado inviable")
     ),
     summary = "Modificar estado del ítem (Finca)",
-    description = "HU025: Actualización manual de estados operativos (ej. EN_TRANSITO o BLOQUEADO)."
+    description = "HU025: Actualización manual de estados respetando reglas de negocio."
 )]
 pub async fn update_status(
     Path(id): Path<Uuid>,
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
     Json(payload): Json<UpdateEstadoDto>
-) -> Result<Json<InventarioItem>, StatusCode> {
-    let item = sqlx
-        ::query_as::<_, InventarioItem>(
-            "UPDATE inventario_items SET estado = $1, updated_at = NOW() 
-         WHERE id = $2 AND modulo = 'FINCA' AND is_deleted = false RETURNING *"
-        )
-        .bind(&payload.estado)
-        .bind(id)
-        .fetch_optional(&pool).await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
+) -> Result<impl IntoResponse, StatusCode> {
+    let current = sqlx::query_as::<_, InventarioItem>(
+        "SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false"
+    ).bind(id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    enviar_auditoria(
-        user_id,
-        "FINCA_UPDATE_STATUS".to_string(),
-        format!("/inventario/finca/{}/estado", id),
-        "N/A".to_string()
-    );
-    Ok(Json(item))
+    let current = match current {
+        Some(i) => i,
+        None => return Ok((StatusCode::NOT_FOUND, Json(serde_json::json!({ "message": "Producto no encontrado." }))).into_response()),
+    };
+
+    if let Err(msg) = validar_transicion_estado(&payload.estado, &current) {
+        return Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({ "message": msg }))).into_response());
+    }
+
+    let mut tx = pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if current.estado != payload.estado {
+        sqlx::query(
+            "INSERT INTO historial_estados (item_id, estado_anterior, estado_nuevo, motivo, usuario_id) VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(id).bind(current.estado).bind(payload.estado).bind(&payload.motivo).bind(&user_id)
+        .execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+
+    let item = sqlx::query_as::<_, InventarioItem>(
+        "UPDATE inventario_items SET estado = $1, updated_at = NOW()
+         WHERE id = $2 AND modulo = 'FINCA' AND is_deleted = false RETURNING *"
+    )
+    .bind(&payload.estado).bind(id)
+    .fetch_one(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    enviar_auditoria(user_id, "FINCA_UPDATE_STATUS".to_string(), format!("/inventario/finca/{}/estado", id), "N/A".to_string());
+    Ok(Json(item).into_response())
 }
 
 #[utoipa::path(
@@ -493,26 +375,31 @@ pub async fn update_status(
     tag = "Inventario Finca",
     params(("id" = Uuid, Path, description = "ID del ítem")),
     responses(
-        (status = 204, description = "Ítem eliminado correctamente"),
-        (status = 401, description = "No autorizado"),
-        (status = 403, description = "Permisos de administración requeridos"),
-        (status = 404, description = "Ítem inexistente"),
-        (status = 500, description = "Error interno")
+        (status = 204, description = "Ítem dado de baja correctamente"),
+        (status = 404, description = "Ítem inexistente")
     ),
-    summary = "Eliminar ítem de finca (Borrado Lógico)",
-    description = "HU024: Marca el ítem como eliminado ocultándolo de las listas generales pero preservando sus datos."
+    summary = "Dar de baja ítem de finca (Borrado Lógico)",
+    description = "HU024: Marca el ítem como eliminado y lo pasa a INACTIVO."
 )]
 pub async fn delete_item(
     Path(id): Path<Uuid>,
-    State(pool): State<PgPool>
+    State(pool): State<PgPool>,
+    Extension(user_id): Extension<String>,
 ) -> Result<StatusCode, StatusCode> {
-    sqlx
+    let result = sqlx
         ::query(
-            "UPDATE inventario_items SET is_deleted = true WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false"
+            "UPDATE inventario_items SET is_deleted = true, estado = 'INACTIVO', updated_at = NOW() \
+             WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false"
         )
         .bind(id)
         .execute(&pool).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    if result.rows_affected() == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    enviar_auditoria(user_id, "FINCA_DELETE_ITEM".to_string(), format!("/inventario/finca/{}", id), "N/A".to_string());
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -523,20 +410,14 @@ pub async fn delete_item(
     request_body = CreateMovimientoDto,
     security(("bearer_auth" = [])),
     responses(
-        (
-            status = 201,
-            description = "Movimiento registrado y stock recalculado",
-            body = MovimientoStock,
-        ),
-        (status = 400, description = "Operación no permitida: Stock insuficiente para salida"),
-        (status = 401, description = "No autorizado"),
+        (status = 201, description = "Movimiento registrado y stock recalculado", body = MovimientoStock),
+        (status = 400, description = "Operación no permitida: Stock insuficiente o cantidad inválida"),
         (status = 404, description = "Ítem destino no existe"),
         (status = 500, description = "Error crítico transaccional")
     ),
     summary = "Registrar entrada/salida de finca",
-    description = "Registra una transacción (cosecha, compra de insumos, merma) y actualiza automáticamente la cantidad disponible."
+    description = "Registra una transacción y actualiza automáticamente la cantidad disponible."
 )]
-
 pub async fn create_movement(
     State(pool): State<PgPool>,
     Extension(user_id): Extension<String>,
@@ -548,9 +429,10 @@ pub async fn create_movement(
 
     let mut tx = pool.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    // EC-01: no permitir movimientos sobre ítems dados de baja.
     let item = sqlx
         ::query_as::<_, InventarioItem>(
-            "SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' FOR UPDATE"
+            "SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = false FOR UPDATE"
         )
         .bind(payload.item_id)
         .fetch_one(&mut *tx).await
@@ -569,20 +451,26 @@ pub async fn create_movement(
     let nuevo_estado = determinar_estado_inventario(nueva_cantidad, item.stock_minimo);
 
     sqlx
-        ::query(
-            "UPDATE inventario_items SET cantidad = $1, estado = $2, updated_at = NOW() WHERE id = $3"
-        )
+        ::query("UPDATE inventario_items SET cantidad = $1, estado = $2, updated_at = NOW() WHERE id = $3")
         .bind(nueva_cantidad)
         .bind(nuevo_estado)
         .bind(item.id)
         .execute(&mut *tx).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
+    if nuevo_estado != item.estado {
+        sqlx::query(
+            "INSERT INTO historial_estados (item_id, estado_anterior, estado_nuevo, motivo, usuario_id) VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(item.id).bind(item.estado).bind(nuevo_estado).bind("Cambio automático por movimiento de stock").bind(&user_id)
+        .execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+
     let movimiento_id = Uuid::new_v4();
     let movimiento = sqlx
         ::query_as::<_, MovimientoStock>(
-            "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo, lote_id, usuario_id) \
-             VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7) RETURNING *"
+            "INSERT INTO movimientos_stock (id, item_id, cantidad, tipo, fecha, motivo, lote_id, usuario_id, numero_factura) \
+             VALUES ($1, $2, $3, $4, NOW(), $5, $6, $7, $8) RETURNING *"
         )
         .bind(movimiento_id)
         .bind(item.id)
@@ -591,29 +479,21 @@ pub async fn create_movement(
         .bind(&payload.motivo)
         .bind(payload.lote_id)
         .bind(&user_id)
+        .bind(&payload.numero_factura)
         .fetch_one(&mut *tx).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    tokio::spawn(async move {
-        enviar_auditoria(
-            user_id,
-            "FINCA_MOVEMENT".to_string(),
-            format!("/inventario/finca/movimientos/{}", movimiento_id),
-            format!("{:?}", payload.tipo)
-        );
-    });
+    let tipo_str = format!("{:?}", payload.tipo);
+    enviar_auditoria(
+        user_id,
+        "FINCA_MOVEMENT".to_string(),
+        format!("/inventario/finca/movimientos/{}", movimiento_id),
+        tipo_str,
+    );
 
     Ok((StatusCode::CREATED, Json(movimiento)))
-}
-
-fn determinar_estado_inventario(cantidad: f64, stock_minimo: f64) -> EstadoInventario {
-    match cantidad {
-        q if q <= 0.0 => EstadoInventario::AGOTADO,
-        q if q <= stock_minimo => EstadoInventario::STOCK_BAJO,
-        _ => EstadoInventario::DISPONIBLE,
-    }
 }
 
 #[utoipa::path(
@@ -622,18 +502,11 @@ fn determinar_estado_inventario(cantidad: f64, stock_minimo: f64) -> EstadoInven
     tag = "Inventario Finca",
     params(("id" = Uuid, Path, description = "ID del ítem"), MovementFilter),
     responses(
-        (
-            status = 200,
-            description = "Historial cronológico de producción recuperado",
-            body = [MovimientoStock],
-        ),
-        (status = 400, description = "Parámetros de fecha ISO-8601 inválidos"),
-        (status = 401, description = "No autorizado"),
-        (status = 404, description = "Ítem no encontrado"),
-        (status = 500, description = "Error interno")
+        (status = 200, description = "Historial cronológico de producción recuperado", body = [MovimientoStock]),
+        (status = 404, description = "Ítem no encontrado")
     ),
     summary = "Obtener historial de ítem (Finca)",
-    description = "Lista cronológicamente todos los movimientos de un producto o insumo de finca con filtros de fecha opcionales."
+    description = "Lista cronológicamente todos los movimientos de un producto o insumo de finca."
 )]
 pub async fn list_movements(
     Path(id): Path<Uuid>,
@@ -645,7 +518,7 @@ pub async fn list_movements(
 
     let movements = sqlx
         ::query_as::<_, MovimientoStock>(
-            "SELECT m.* FROM movimientos_stock m JOIN inventario_items i ON m.item_id = i.id 
+            "SELECT m.* FROM movimientos_stock m JOIN inventario_items i ON m.item_id = i.id
          WHERE i.id = $1 AND i.modulo = 'FINCA' AND (m.fecha >= $2 OR $2 IS NULL) AND (m.fecha <= $3 OR $3 IS NULL) ORDER BY m.fecha DESC"
         )
         .bind(id)
@@ -663,18 +536,11 @@ pub async fn list_movements(
     params(MovementFilter),
     security(("bearer_auth" = [])),
     responses(
-        (
-            status = 200,
-            description = "CSV de auditoría de finca generado",
-            content_type = "text/csv",
-        ),
-        (status = 401, description = "No autorizado"),
-        (status = 403, description = "Faltan permisos de exportación"),
-        (status = 500, description = "Error al serializar datos a CSV"),
-        (status = 503, description = "Servicio ocupado")
+        (status = 200, description = "CSV de auditoría de finca generado", content_type = "text/csv"),
+        (status = 401, description = "No autorizado")
     ),
     summary = "Exportar auditoría general finca (CSV)",
-    description = "HU026: Genera un archivo CSV con el reporte total de movimientos del módulo de finca para control administrativo. Requiere autenticación."
+    description = "HU026: Genera un archivo CSV con el reporte total de movimientos del módulo de finca."
 )]
 pub async fn export_all_movements_csv(
     State(pool): State<PgPool>,
@@ -686,7 +552,7 @@ pub async fn export_all_movements_csv(
 
     let movements = sqlx
         ::query_as::<_, MovimientoStock>(
-            "SELECT m.* FROM movimientos_stock m JOIN inventario_items i ON m.item_id = i.id 
+            "SELECT m.* FROM movimientos_stock m JOIN inventario_items i ON m.item_id = i.id
          WHERE i.modulo = 'FINCA' AND (m.fecha >= $1 OR $1 IS NULL) AND (m.fecha <= $2 OR $2 IS NULL) ORDER BY m.fecha DESC"
         )
         .bind(start)
@@ -695,27 +561,21 @@ pub async fn export_all_movements_csv(
         .unwrap_or_default();
 
     let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(&["ID", "ItemID", "Cantidad", "Tipo", "Fecha", "Motivo"]).unwrap();
+    wtr.write_record(["ID", "ItemID", "Cantidad", "Tipo", "Fecha", "Motivo", "NumeroFactura"]).unwrap();
     for m in movements {
-        wtr.write_record(
-            &[
-                m.id.to_string(),
-                m.item_id.to_string(),
-                m.cantidad.to_string(),
-                format!("{:?}", m.tipo),
-                m.fecha.to_rfc3339(),
-                m.motivo,
-            ]
-        ).unwrap();
+        wtr.write_record([
+            m.id.to_string(),
+            m.item_id.to_string(),
+            m.cantidad.to_string(),
+            format!("{:?}", m.tipo),
+            m.fecha.to_rfc3339(),
+            m.motivo,
+            m.numero_factura.unwrap_or_default(),
+        ]).unwrap();
     }
     let csv_data = wtr.into_inner().unwrap();
 
-    enviar_auditoria(
-        user_id,
-        "FINCA_EXPORT_CSV".to_string(),
-        "/inventario/finca/movimientos/exportar".to_string(),
-        "N/A".to_string()
-    );
+    enviar_auditoria(user_id, "FINCA_EXPORT_CSV".to_string(), "/inventario/finca/movimientos/exportar".to_string(), "N/A".to_string());
 
     (
         StatusCode::OK,
@@ -725,4 +585,86 @@ pub async fn export_all_movements_csv(
         ],
         csv_data,
     )
+}
+
+// --- HU024: papelera (baja / restauración) ---
+
+pub async fn list_deleted(State(pool): State<PgPool>) -> Result<Json<Vec<InventarioItem>>, StatusCode> {
+    let items = sqlx::query_as::<_, InventarioItem>(
+        "SELECT * FROM inventario_items WHERE modulo = 'FINCA' AND is_deleted = true ORDER BY updated_at DESC"
+    )
+    .fetch_all(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(items))
+}
+
+pub async fn restore_item(
+    Path(id): Path<Uuid>,
+    State(pool): State<PgPool>,
+    Extension(user_id): Extension<String>,
+) -> Result<Json<InventarioItem>, StatusCode> {
+    let item = sqlx::query_as::<_, InventarioItem>(
+        "SELECT * FROM inventario_items WHERE id = $1 AND modulo = 'FINCA' AND is_deleted = true"
+    ).bind(id).fetch_optional(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    let nuevo_estado = determinar_estado_inventario(item.cantidad, item.stock_minimo);
+    let restored = sqlx::query_as::<_, InventarioItem>(
+        "UPDATE inventario_items SET is_deleted = false, estado = $1, updated_at = NOW() WHERE id = $2 RETURNING *"
+    )
+    .bind(nuevo_estado).bind(id)
+    .fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    enviar_auditoria(user_id, "FINCA_RESTORE_ITEM".to_string(), format!("/inventario/finca/{}/restaurar", id), "N/A".to_string());
+    Ok(Json(restored))
+}
+
+// --- HU028: analítica de inventario ---
+
+pub async fn list_alertas_stock(State(pool): State<PgPool>) -> Result<Json<Vec<AlertaStock>>, StatusCode> {
+    let alertas = sqlx::query_as::<_, AlertaStock>(
+        "SELECT id as item_id, nombre, cantidad as cantidad_actual, stock_minimo,
+            CASE WHEN cantidad <= 0 THEN 'Producto agotado' ELSE 'Stock por debajo del mínimo' END as mensaje
+         FROM inventario_items
+         WHERE modulo = 'FINCA' AND is_deleted = false AND cantidad <= stock_minimo
+         ORDER BY (cantidad / NULLIF(stock_minimo, 0)) ASC NULLS FIRST"
+    )
+    .fetch_all(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(alertas))
+}
+
+pub async fn get_stats(State(pool): State<PgPool>) -> Result<Json<StockStats>, StatusCode> {
+    let stats = sqlx::query_as::<_, StockStats>(
+        "SELECT
+            COUNT(*) as total_items,
+            COUNT(*) FILTER (WHERE estado = 'DISPONIBLE') as disponibles,
+            COUNT(*) FILTER (WHERE estado = 'STOCK_BAJO') as stock_bajo,
+            COUNT(*) FILTER (WHERE estado = 'AGOTADO') as agotados,
+            COALESCE(SUM(cantidad * precio), 0) as valor_total,
+            (SELECT COUNT(*) FROM lotes_cafe) as num_lotes
+         FROM inventario_items WHERE modulo = 'FINCA' AND is_deleted = false"
+    )
+    .fetch_one(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(stats))
+}
+
+// --- HU019 / HU025: bitácoras ---
+
+pub async fn list_price_history(
+    Path(id): Path<Uuid>,
+    State(pool): State<PgPool>,
+) -> Result<Json<Vec<HistorialPrecio>>, StatusCode> {
+    let history = sqlx::query_as::<_, HistorialPrecio>(
+        "SELECT * FROM historial_precios WHERE item_id = $1 ORDER BY fecha_cambio DESC"
+    ).bind(id).fetch_all(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(history))
+}
+
+pub async fn list_status_history(
+    Path(id): Path<Uuid>,
+    State(pool): State<PgPool>,
+) -> Result<Json<Vec<HistorialEstado>>, StatusCode> {
+    let history = sqlx::query_as::<_, HistorialEstado>(
+        "SELECT * FROM historial_estados WHERE item_id = $1 ORDER BY fecha DESC"
+    ).bind(id).fetch_all(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(history))
 }
