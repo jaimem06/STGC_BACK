@@ -185,8 +185,9 @@ export class PosService {
     if (pedido.estado === 'PAGADO' || pedido.estado === 'ANULADO') {
       throw new AppError('Pedido ya finalizado o anulado', 400);
     }
+    
     if (data.montoRecibido < pedido.total) {
-      throw new AppError('Monto insuficiente', 400);
+      throw new AppError('El monto ingresado no coincide con el total del pedido', 400); 
     }
 
     const updatedPedido = await prisma.pedido.update({
@@ -230,8 +231,8 @@ export class PosService {
     // Calcular diferencia: monto_fisico - (monto_inicial + ventas_efectivo)
     const diferencia = montoCierreFisico - (turno.montoApertura + ventas_efectivo);
     
-    // EstadoTurno: Si diferencia != 0 -> DESCUADRADO, sino CERRADO
-    const estadoFinal = diferencia !== 0 ? 'DESCUADRADO' : 'CERRADO';
+    // Ajustado a HU011 - CA2 y CA3 (Formato Enum)
+    const estadoFinal = diferencia !== 0 ? 'CERRADO_CON_DESCUADRE' : 'CERRADO_CONCILIADO';
 
     // Para el registro, también calculamos el cierre teórico total del sistema
     const todosLosPedidos = await prisma.pedido.findMany({
