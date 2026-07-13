@@ -1,0 +1,222 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Microservicio POS (Cajero)",
+    "description": "API para la gestión de turnos, pedidos e inventario de cafetería.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "/api/pos",
+      "description": "Base URL"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/caja/apertura": {
+      "post": {
+        "summary": "Abrir turno de caja",
+        "tags": ["Caja"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "montoApertura": { "type": "number" }
+                },
+                "required": ["montoApertura"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Turno abierto exitosamente" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    },
+    "/caja/cierre": {
+      "post": {
+        "summary": "Cerrar turno de caja",
+        "tags": ["Caja"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "montoCierreFisico": { "type": "number" }
+                },
+                "required": ["montoCierreFisico"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Caja cerrada exitosamente" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    },
+    "/productos": {
+      "get": {
+        "summary": "Listar productos de cafetería",
+        "tags": ["Inventario"],
+        "responses": {
+          "200": { "description": "Lista de productos" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    },
+    "/pedidos": {
+      "post": {
+        "summary": "Crear un nuevo pedido",
+        "tags": ["Pedidos"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "cliente_nombre": { "type": "string" },
+                  "cliente_cedula": { "type": "string" },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "productoId": { "type": "string" },
+                        "nombre": { "type": "string" },
+                        "cantidad": { "type": "integer" },
+                        "precioUnitario": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Pedido creado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    },
+    "/pedidos/{id}": {
+      "put": {
+        "summary": "Actualizar pedido en edición",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Pedido actualizado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    },
+    "/pedidos/{id}/anular": {
+      "patch": {
+        "summary": "Anular un pedido",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Pedido anulado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    },
+    "/pedidos/{id}/pagar": {
+      "post": {
+        "summary": "Procesar pago de pedido",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "metodoPago": { "type": "string", "enum": ["EFECTIVO", "TARJETA_CREDITO", "TARJETA_DEBITO", "TRANSFERENCIA"] },
+                  "montoRecibido": { "type": "number" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Pago procesado" },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    },
+    "/pedidos/{id}/comprobante": {
+      "get": {
+        "summary": "Obtener comprobante PDF",
+        "tags": ["Pedidos"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Archivo PDF", "content": { "application/pdf": {} } },
+          "400": { "description": "Petición inválida / Validación fallida" },
+          "401": { "description": "No autorizado / Token faltante o expirado" },
+          "403": { "description": "Prohibido / Rol insuficiente" },
+          "404": { "description": "Recurso no encontrado" },
+          "500": { "description": "Error interno del servidor" }
+        }
+      }
+    }
+  }
+}
