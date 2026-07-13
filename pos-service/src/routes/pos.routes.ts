@@ -4,7 +4,6 @@ import { authMiddleware } from '../middlewares/auth.middleware';
 
 const router = Router();
 
-// Todas las rutas del POS requieren autenticación
 router.use(authMiddleware);
 
 // Gestión de Turno/Caja
@@ -16,6 +15,7 @@ router.post('/caja/cierre', PosController.cerrarCaja);
 router.get('/productos', PosController.getProductos);
 
 // Pedidos
+router.get('/pedidos', PosController.getPedidos); // NUEVA RUTA AGREGADA
 router.post('/pedidos', PosController.crearPedido);
 router.put('/pedidos/:id', PosController.actualizarPedido);
 router.patch('/pedidos/:id/anular', PosController.anularPedido);
