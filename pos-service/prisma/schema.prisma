@@ -9,8 +9,8 @@ datasource db {
 
 enum EstadoTurno {
   ABIERTO
-  CERRADO
-  DESCUADRADO
+  CERRADO_CONCILIADO
+  CERRADO_CON_DESCUADRE
   @@schema("pos_service")
 }
 
