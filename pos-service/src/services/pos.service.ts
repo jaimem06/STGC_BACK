@@ -6,7 +6,7 @@ import axios from 'axios';
 import { Request } from 'express';
 
 export class PosService {
-  private static IVA_RATE = parseFloat(process.env.IVA_RATE || '0.19');
+  private static IVA_RATE = parseFloat(process.env.IVA_RATE || '0.15');
 
   static async getTurnoActivo(usuarioId: string) {
     const turno = await prisma.turno.findFirst({
@@ -39,13 +39,12 @@ export class PosService {
 
     const token = req.headers.authorization;
 
-    // Validar stock de todos los items
     for (const item of data.items) {
       const ok = await validateStock(item.productoId, item.cantidad, token);
-      if (!ok) throw new AppError(`Stock insuficiente para ${item.nombre}`, 400);
+      if (!ok) throw new AppError('Producto no disponible', 400); 
     }
 
-    // Calcular montos (Float según Sprint 3)
+    // Calcular montos
     let subtotal = 0;
     data.items.forEach((item: any) => {
       item.subtotal = item.cantidad * item.precioUnitario;
@@ -59,19 +58,19 @@ export class PosService {
       data: {
         turnoId: turno.id,
         cajero_id: usuarioId,
-        cliente_nombre: data.cliente_nombre,
+        cliente_nombre: data.cliente_nombre, 
         cliente_cedula: data.cliente_cedula,
         subtotal,
         iva,
         total,
-        estado: 'EN_EDICION',
+        estado: 'EN_EDICION', 
         items: {
           create: data.items.map((item: any) => ({
             productoId: item.productoId,
             nombre: item.nombre,
             cantidad: item.cantidad,
             precioUnitario: item.precioUnitario,
-            subtotal: item.subtotal
+            subtotal: item.subtotal 
           }))
         }
       },
@@ -94,13 +93,54 @@ export class PosService {
     });
 
     if (!pedido) throw new AppError('Pedido no encontrado', 404);
-    if (pedido.estado !== 'EN_EDICION') throw new AppError('Solo se pueden editar pedidos en edición', 400);
+    
+    if (pedido.estado !== 'EN_EDICION') {
+      throw new AppError('El pedido no puede ser modificado porque ya se encuentra en estado Pagado/Cerrado/Facturado/Anulado', 400);
+    }
 
     const updateData: any = { 
-      cliente_nombre: data.cliente_nombre,
-      cliente_cedula: data.cliente_cedula
+      cliente_nombre: data.cliente_nombre !== undefined ? data.cliente_nombre : pedido.cliente_nombre,
+      cliente_cedula: data.cliente_cedula !== undefined ? data.cliente_cedula : pedido.cliente_cedula
     };
     
+    const token = req.headers.authorization;
+
+    if (data.items && data.items.length > 0) {
+      for (const item of pedido.items) {
+        await updateStock(item.productoId, item.cantidad, 'LIBERAR', token);
+      }
+
+      let subtotal = 0;
+      for (const item of data.items) {
+        const ok = await validateStock(item.productoId, item.cantidad, token);
+        if (!ok) throw new AppError('Producto no disponible', 400);
+        item.subtotal = item.cantidad * item.precioUnitario;
+        subtotal += item.subtotal;
+      }
+
+      const iva = parseFloat((subtotal * this.IVA_RATE).toFixed(2));
+      const total = parseFloat((subtotal + iva).toFixed(2));
+
+      updateData.subtotal = subtotal;
+      updateData.iva = iva;
+      updateData.total = total;
+
+      updateData.items = {
+        deleteMany: {}, 
+        create: data.items.map((item: any) => ({
+          productoId: item.productoId,
+          nombre: item.nombre,
+          cantidad: item.cantidad,
+          precioUnitario: item.precioUnitario,
+          subtotal: item.subtotal
+        }))
+      };
+
+      for (const item of data.items) {
+        await updateStock(item.productoId, item.cantidad, 'RESERVAR', token);
+      }
+    }
+
     const updatedPedido = await prisma.pedido.update({
       where: { id: pedidoId },
       data: updateData,
@@ -145,7 +185,6 @@ export class PosService {
     if (pedido.estado === 'PAGADO' || pedido.estado === 'ANULADO') {
       throw new AppError('Pedido ya finalizado o anulado', 400);
     }
-
     if (data.montoRecibido < pedido.total) {
       throw new AppError('Monto insuficiente', 400);
     }
@@ -155,11 +194,11 @@ export class PosService {
       data: {
         estado: 'PAGADO',
         metodoPago: data.metodoPago,
+        referencia_pago: data.referencia_pago, // CUMPLIMIENTO HU009 CA5: Guardar referencia
         fecha_pago: new Date()
       }
     });
 
-    // Descontar stock real
     const token = req.headers.authorization;
     for (const item of pedido.items) {
       await updateStock(item.productoId, item.cantidad, 'DESCONTAR', token);
@@ -186,7 +225,7 @@ export class PosService {
       }
     });
 
-    const ventas_efectivo = pedidosEfectivo.reduce((acc, p) => acc + p.total, 0);
+    const ventas_efectivo = pedidosEfectivo.reduce((acc: number, p: any) => acc + p.total, 0);
     
     // Calcular diferencia: monto_fisico - (monto_inicial + ventas_efectivo)
     const diferencia = montoCierreFisico - (turno.montoApertura + ventas_efectivo);
@@ -198,7 +237,7 @@ export class PosService {
     const todosLosPedidos = await prisma.pedido.findMany({
       where: { turnoId: turno.id, estado: 'PAGADO' }
     });
-    const montoVentasTotal = todosLosPedidos.reduce((acc, p) => acc + p.total, 0);
+    const montoVentasTotal = todosLosPedidos.reduce((acc: number, p: any) => acc + p.total, 0);
     const montoCierreSistema = turno.montoApertura + montoVentasTotal;
 
     const updatedTurno = await prisma.turno.update({
