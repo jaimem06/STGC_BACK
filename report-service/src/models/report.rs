@@ -43,7 +43,7 @@ pub struct MovimientoReport {
     pub cantidad: f64,
     pub motivo: String,
     pub usuario_id: Option<String>,
-    pub fecha: DateTime<Utc>,
+    pub fecha: DateTime<Utc>,  // <--- Cambiado a DateTime<Utc>
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, FromRow)]
@@ -58,7 +58,7 @@ pub struct VentaReport {
     pub total: f64,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema, FromRow)]  // <--- FromRow añadido
+#[derive(Debug, Serialize, Deserialize, ToSchema, FromRow)]
 pub struct DashboardReport {
     pub total_productos: i64,
     pub stock_bajo: i64,
