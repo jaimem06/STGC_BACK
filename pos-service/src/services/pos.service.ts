@@ -2,7 +2,6 @@ import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
 import { auditAction } from './audit.service';
 import { updateStock, validateStock } from './inventory.service';
-import axios from 'axios';
 import { Request } from 'express';
 
 export class PosService {
@@ -32,6 +31,24 @@ export class PosService {
     return turno;
   }
 
+  // NUEVO: OBTENER PEDIDOS CON FILTRO DE ESTADO (HU005)
+  static async getPedidos(req: Request, estados?: string) {
+    const usuarioId = req.user!.sub;
+    const turno = await this.getTurnoActivo(usuarioId);
+    if (!turno) throw new AppError('No hay un turno abierto', 400);
+
+    const whereClause: any = { turnoId: turno.id };
+    if (estados) {
+      whereClause.estado = { in: estados.split(',').map(e => e.trim()) };
+    }
+
+    return await prisma.pedido.findMany({
+      where: whereClause,
+      include: { items: true, pagos: true },
+      orderBy: { fechaCreacion: 'desc' }
+    });
+  }
+
   static async crearPedido(req: Request, data: any) {
     const usuarioId = req.user!.sub;
     const turno = await this.getTurnoActivo(usuarioId);
@@ -44,7 +61,6 @@ export class PosService {
       if (!ok) throw new AppError('Producto no disponible', 400); 
     }
 
-    // Calcular montos
     let subtotal = 0;
     data.items.forEach((item: any) => {
       item.subtotal = item.cantidad * item.precioUnitario;
@@ -59,6 +75,7 @@ export class PosService {
         turnoId: turno.id,
         cajero_id: usuarioId,
         cliente_nombre: data.cliente_nombre, 
+        cliente_apellido: data.cliente_apellido, // NUEVO
         cliente_cedula: data.cliente_cedula,
         subtotal,
         iva,
@@ -74,10 +91,9 @@ export class PosService {
           }))
         }
       },
-      include: { items: true }
+      include: { items: true, pagos: true }
     });
 
-    // Reservar stock
     for (const item of data.items) {
       await updateStock(item.productoId, item.cantidad, 'RESERVAR', token);
     }
@@ -100,6 +116,7 @@ export class PosService {
 
     const updateData: any = { 
       cliente_nombre: data.cliente_nombre !== undefined ? data.cliente_nombre : pedido.cliente_nombre,
+      cliente_apellido: data.cliente_apellido !== undefined ? data.cliente_apellido : pedido.cliente_apellido, // NUEVO
       cliente_cedula: data.cliente_cedula !== undefined ? data.cliente_cedula : pedido.cliente_cedula
     };
     
@@ -144,7 +161,7 @@ export class PosService {
     const updatedPedido = await prisma.pedido.update({
       where: { id: pedidoId },
       data: updateData,
-      include: { items: true }
+      include: { items: true, pagos: true }
     });
 
     await auditAction(req, 'ACTUALIZAR_PEDIDO');
@@ -165,7 +182,6 @@ export class PosService {
       data: { estado: 'ANULADO' }
     });
 
-    // Liberar stock reservado
     const token = req.headers.authorization;
     for (const item of pedido.items) {
       await updateStock(item.productoId, item.cantidad, 'LIBERAR', token);
@@ -175,6 +191,7 @@ export class PosService {
     return updatedPedido;
   }
 
+  // NUEVO: PROCESAR ARREGLO DE PAGOS MÚLTIPLES (HU009)
   static async pagarPedido(req: Request, pedidoId: string, data: any) {
     const pedido = await prisma.pedido.findUnique({
       where: { id: pedidoId },
@@ -186,18 +203,27 @@ export class PosService {
       throw new AppError('Pedido ya finalizado o anulado', 400);
     }
     
-    if (data.montoRecibido < pedido.total) {
-      throw new AppError('El monto ingresado no coincide con el total del pedido', 400); 
+    // HU009 - CA3: Validar que la suma sea exactamente igual al total
+    const sumaPagos = parseFloat(data.pagos.reduce((acc: number, p: any) => acc + p.monto, 0).toFixed(2));
+    
+    if (sumaPagos !== pedido.total) {
+      throw new AppError(`La suma de los pagos (${sumaPagos}) no coincide con el total del pedido (${pedido.total})`, 400); 
     }
 
     const updatedPedido = await prisma.pedido.update({
       where: { id: pedidoId },
       data: {
         estado: 'PAGADO',
-        metodoPago: data.metodoPago,
-        referencia_pago: data.referencia_pago, // CUMPLIMIENTO HU009 CA5: Guardar referencia
-        fecha_pago: new Date()
-      }
+        fecha_pago: new Date(),
+        pagos: {
+          create: data.pagos.map((p: any) => ({
+            metodoPago: p.metodoPago,
+            monto: p.monto,
+            referencia_pago: p.referencia_pago
+          }))
+        }
+      },
+      include: { items: true, pagos: true }
     });
 
     const token = req.headers.authorization;
@@ -206,39 +232,49 @@ export class PosService {
     }
 
     await auditAction(req, 'PAGAR_PEDIDO');
+    
+    // Como la suma debe ser exacta, el vuelto siempre será 0 (según reglas actuales)
     return {
       pedido: updatedPedido,
-      vuelto: parseFloat((data.montoRecibido - pedido.total).toFixed(2))
+      vuelto: 0
     };
   }
 
+  // NUEVO: GENERAR RESUMEN Y DESGLOSE AL CERRAR CAJA (HU010)
   static async cerrarCaja(req: Request, montoCierreFisico: number, sessionToken: string) {
     const usuarioId = req.user!.sub;
     const turno = await this.getTurnoActivo(usuarioId);
     if (!turno) throw new AppError('No hay turno abierto para cerrar', 400);
 
-    // Calcular ventas en EFECTIVO (Sprint 3)
-    const pedidosEfectivo = await prisma.pedido.findMany({
-      where: { 
-        turnoId: turno.id, 
-        estado: 'PAGADO',
-        metodoPago: 'EFECTIVO'
-      }
+    const pedidosPagados = await prisma.pedido.findMany({
+      where: { turnoId: turno.id, estado: 'PAGADO' },
+      include: { pagos: true }
     });
 
-    const ventas_efectivo = pedidosEfectivo.reduce((acc: number, p: any) => acc + p.total, 0);
-    
-    // Calcular diferencia: monto_fisico - (monto_inicial + ventas_efectivo)
-    const diferencia = montoCierreFisico - (turno.montoApertura + ventas_efectivo);
-    
-    // Ajustado a HU011 - CA2 y CA3 (Formato Enum)
+    let ventasFisicasEfectivo = 0;
+    let montoVentasTotal = 0;
+    const desglose: Record<string, number> = {
+      EFECTIVO: 0,
+      TARJETA_CREDITO: 0,
+      TARJETA_DEBITO: 0,
+      TRANSFERENCIA: 0,
+      DE_UNA: 0,
+      AHORITA: 0
+    };
+
+    // Calcular el total desglosado por cada método de pago
+    pedidosPagados.forEach(p => {
+      montoVentasTotal += p.total;
+      p.pagos.forEach(pago => {
+        desglose[pago.metodoPago] = parseFloat((desglose[pago.metodoPago] + pago.monto).toFixed(2));
+        if (pago.metodoPago === 'EFECTIVO') {
+          ventasFisicasEfectivo += pago.monto;
+        }
+      });
+    });
+
+    const diferencia = montoCierreFisico - (turno.montoApertura + ventasFisicasEfectivo);
     const estadoFinal = diferencia !== 0 ? 'CERRADO_CON_DESCUADRE' : 'CERRADO_CONCILIADO';
-
-    // Para el registro, también calculamos el cierre teórico total del sistema
-    const todosLosPedidos = await prisma.pedido.findMany({
-      where: { turnoId: turno.id, estado: 'PAGADO' }
-    });
-    const montoVentasTotal = todosLosPedidos.reduce((acc: number, p: any) => acc + p.total, 0);
     const montoCierreSistema = turno.montoApertura + montoVentasTotal;
 
     const updatedTurno = await prisma.turno.update({
@@ -252,11 +288,15 @@ export class PosService {
       }
     });
 
-    // El cierre de caja no debe cerrar la sesión del usuario (logout) en el sistema.
-    // Simplemente cierra el turno del POS.
-
     await auditAction(req, 'CIERRE_CAJA');
 
-    return updatedTurno;
+    // Estructura exacta que pide el frontend / HU010
+    return {
+      turno: updatedTurno,
+      resumen: {
+        desglose,
+        totalTransacciones: pedidosPagados.length
+      }
+    };
   }
 }
