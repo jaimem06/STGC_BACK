@@ -1,0 +1,57 @@
+generator client {
+  provider             = "prisma-client-py"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVO
+  INACTIVO
+  SUSPENDIDO
+  PENDIENTE
+}
+
+model Role {
+  id          String       @id @default(uuid())
+  name        String       @unique
+  description String?
+  created_at  DateTime     @default(now())
+  users       User[]
+
+  @@map("roles")
+}
+
+model User {
+  id              String     @id @default(uuid())
+  email           String     @unique
+  first_name      String?
+  last_name       String?
+  identifier      String?    @unique
+  phone_number    String?    @unique
+  password_hash   String
+  role_id         String
+  role            Role       @relation(fields: [role_id], references: [id])
+  status          UserStatus @default(ACTIVO)
+  suspended_from  DateTime?
+  suspended_until DateTime?
+  session_token   String?    @unique
+  audit_logs      AuditLog[]
+
+  @@map("users")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  user_id    String
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  action     String
+  endpoint   String?
+  ip_address String?
+  created_at DateTime @default(now())
+
+  @@map("audit_logs")
+}
