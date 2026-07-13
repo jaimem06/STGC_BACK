@@ -9,8 +9,8 @@ datasource db {
 
 enum EstadoTurno {
   ABIERTO
-  CERRADO
-  DESCUADRADO
+  CERRADO_CONCILIADO
+  CERRADO_CON_DESCUADRE
   @@schema("pos_service")
 }
 
@@ -22,46 +22,50 @@ enum EstadoPedido {
   @@schema("pos_service")
 }
 
+// 1. AÑADIMOS DE_UNA Y AHORITA AL ENUM
 enum MetodoPago {
   EFECTIVO
   TARJETA_CREDITO
   TARJETA_DEBITO
   TRANSFERENCIA
+  DE_UNA
+  AHORITA
   @@schema("pos_service")
 }
 
 model Turno {
-  id              String       @id @default(uuid())
-  usuarioId       String       
-  fechaApertura   DateTime     @default(now())
-  fechaCierre     DateTime?
-  montoApertura   Float
-  montoCierreFisico Float?      
-  montoCierreSistema Float?     
-  diferencia      Float?
-  estado          EstadoTurno  @default(ABIERTO)
-  pedidos         Pedido[]
+  id                 String       @id @default(uuid())
+  usuarioId          String       
+  fechaApertura      DateTime     @default(now())
+  fechaCierre        DateTime?
+  montoApertura      Float
+  montoCierreFisico  Float?      
+  montoCierreSistema Float?
+  diferencia         Float?
+  estado             EstadoTurno  @default(ABIERTO)
+  pedidos            Pedido[]
   
   @@index([usuarioId])
   @@schema("pos_service")
 }
 
 model Pedido {
-  id              String       @id @default(uuid())
-  turnoId         String
-  turno           Turno        @relation(fields: [turnoId], references: [id])
-  cajero_id       String
-  cliente_nombre  String?
-  cliente_cedula  String?
-  items           PedidoItem[]
-  subtotal        Float
-  iva             Float
-  total           Float
-  estado          EstadoPedido @default(EN_EDICION)
-  metodoPago      MetodoPago?
-  fecha_pago      DateTime?
-  fechaCreacion   DateTime     @default(now())
-  fechaActualizacion DateTime  @updatedAt
+  id                 String       @id @default(uuid())
+  turnoId            String
+  turno              Turno        @relation(fields: [turnoId], references: [id])
+  cajero_id          String
+  cliente_nombre     String?
+  cliente_apellido   String?      // 2. AÑADIMOS EL APELLIDO DEL CLIENTE
+  cliente_cedula     String?
+  items              PedidoItem[]
+  pagos              Pago[]       // 3. RELACIÓN: UN PEDIDO PUEDE TENER VARIOS PAGOS
+  subtotal           Float
+  iva                Float
+  total              Float
+  estado             EstadoPedido @default(EN_EDICION)
+  fecha_pago         DateTime?
+  fechaCreacion      DateTime     @default(now())
+  fechaActualizacion DateTime     @updatedAt
 
   @@index([turnoId])
   @@schema("pos_service")
@@ -76,6 +80,20 @@ model PedidoItem {
   cantidad        Int
   precioUnitario  Float
   subtotal        Float
+
+  @@index([pedidoId])
+  @@schema("pos_service")
+}
+
+// 4. NUEVA TABLA PARA GUARDAR MÚLTIPLES PAGOS POR PEDIDO (HU009)
+model Pago {
+  id              String     @id @default(uuid())
+  pedidoId        String
+  pedido          Pedido     @relation(fields: [pedidoId], references: [id])
+  metodoPago      MetodoPago
+  monto           Float
+  referencia_pago String?
+  fecha_pago      DateTime   @default(now())
 
   @@index([pedidoId])
   @@schema("pos_service")
