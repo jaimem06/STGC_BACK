@@ -295,8 +295,7 @@ export class PosService {
       turno: updatedTurno,
       resumen: {
         desglose,
-        totalTransacciones: pedidosPagados.length,
-        montoVentasTotal
+        totalTransacciones: pedidosPagados.length
       }
     };
   }
