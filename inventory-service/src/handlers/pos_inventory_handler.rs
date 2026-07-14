@@ -233,14 +233,17 @@ pub async fn update_item(
         }
     }
 
+    let nuevo_stock_minimo = payload.stock_minimo.unwrap_or(current_item.stock_minimo);
+    let nuevo_estado = determinar_estado_inventario(new_cantidad, nuevo_stock_minimo);
+
     let item = sqlx::query_as::<_, InventarioItem>(
         "UPDATE inventario_items SET nombre = COALESCE($1, nombre), precio = COALESCE($2, precio),
          descripcion = COALESCE($3, descripcion), stock_minimo = COALESCE($4, stock_minimo),
          unidad_medida = COALESCE($5, unidad_medida), fecha_caducidad = COALESCE($6, fecha_caducidad),
-         cantidad = $7, updated_at = NOW()
-         WHERE id = $8 AND modulo = 'CAFETERIA' AND is_deleted = false RETURNING *"
+         cantidad = $7, estado = $8, updated_at = NOW()
+         WHERE id = $9 AND modulo = 'CAFETERIA' AND is_deleted = false RETURNING *"
     )
-    .bind(nombre_trim).bind(payload.precio).bind(payload.descripcion).bind(payload.stock_minimo).bind(payload.unidad_medida).bind(fecha).bind(new_cantidad).bind(id)
+    .bind(nombre_trim).bind(payload.precio).bind(payload.descripcion).bind(payload.stock_minimo).bind(payload.unidad_medida).bind(fecha).bind(new_cantidad).bind(&nuevo_estado).bind(id)
     .fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let item = match item {

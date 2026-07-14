@@ -277,6 +277,9 @@ pub async fn update_item(
         }
     }
 
+    let nuevo_stock_minimo = payload.stock_minimo.unwrap_or(current_item.stock_minimo);
+    let nuevo_estado = determinar_estado_inventario(new_cantidad, nuevo_stock_minimo);
+
     let item = sqlx
         ::query_as::<_, InventarioItem>(
             "UPDATE inventario_items SET
@@ -287,8 +290,9 @@ pub async fn update_item(
             unidad_medida = COALESCE($5, unidad_medida),
             fecha_caducidad = COALESCE($6, fecha_caducidad),
             cantidad = $7,
+            estado = $8,
             updated_at = NOW()
-         WHERE id = $8 AND modulo = 'FINCA' AND is_deleted = false RETURNING *"
+         WHERE id = $9 AND modulo = 'FINCA' AND is_deleted = false RETURNING *"
         )
         .bind(nombre_trim)
         .bind(payload.precio)
@@ -297,6 +301,7 @@ pub async fn update_item(
         .bind(payload.unidad_medida)
         .bind(fecha)
         .bind(new_cantidad)
+        .bind(&nuevo_estado)
         .bind(id)
         .fetch_optional(&mut *tx).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
