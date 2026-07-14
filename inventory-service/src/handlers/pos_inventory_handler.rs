@@ -531,9 +531,9 @@ pub async fn restore_item(
 pub async fn list_alertas_stock(State(pool): State<PgPool>) -> Result<Json<Vec<AlertaStock>>, StatusCode> {
     let alertas = sqlx::query_as::<_, AlertaStock>(
         "SELECT id as item_id, nombre, cantidad as cantidad_actual, stock_minimo,
-            CASE WHEN cantidad <= 0 THEN 'Producto agotado' ELSE 'Stock por debajo del mínimo' END as mensaje
+            'Stock por debajo del mínimo' as mensaje
          FROM inventario_items
-         WHERE modulo = 'CAFETERIA' AND is_deleted = false AND cantidad <= stock_minimo
+         WHERE modulo = 'CAFETERIA' AND is_deleted = false AND cantidad > 0 AND cantidad <= stock_minimo
          ORDER BY (cantidad / NULLIF(stock_minimo, 0)) ASC NULLS FIRST"
     )
     .fetch_all(&pool).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
