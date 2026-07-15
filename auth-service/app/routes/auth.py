@@ -131,8 +131,13 @@ async def recover_password(
     email_lower = data.email.lower()
     user = await db.user.find_unique(where={"email": email_lower})
     if user:
+        logger.info("Recuperación solicitada: usuario %s encontrado, agendando envío de correo.", email_lower)
         token = create_password_reset_token(email_lower, user.password_hash)
         background_tasks.add_task(send_password_reset_email, email_lower, token)
+    else:
+        # No revelamos al cliente que el usuario no existe (evita enumeración),
+        # pero lo registramos para poder diagnosticar por qué "no llega el correo".
+        logger.warning("Recuperación solicitada para email inexistente: %s. No se envía correo.", email_lower)
     return {"message": "En caso de que el email exista, se ha enviado un enlace de recuperación"}
 
 @router.post(

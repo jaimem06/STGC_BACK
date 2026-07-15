@@ -18,14 +18,22 @@ def send_email(
     recipient_email: str,
     subject: str,
     body_html: str
-):
+) -> bool:
     """
     Envía un correo electrónico utilizando la configuración SMTP.
     Soporta TLS (587) y SSL (465).
+
+    Devuelve True si el correo se envió correctamente, False en caso contrario.
+    Nunca lanza excepciones (pensado para correr dentro de un BackgroundTask),
+    pero registra con claridad la causa exacta de cualquier fallo.
     """
     if not settings.smtp_user or not settings.smtp_password:
-        logger.warning("SMTP no configurado. El correo no será enviado.")
-        return
+        logger.error(
+            "SMTP NO CONFIGURADO: faltan SMTP_USER y/o SMTP_PASSWORD. "
+            "El correo a %s NO fue enviado. Revise las variables de entorno.",
+            recipient_email,
+        )
+        return False
 
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
@@ -50,19 +58,44 @@ def send_email(
             if settings.smtp_port != 465 and settings.smtp_tls:
                 server.starttls()
                 server.ehlo()
-            
+
             server.login(settings.smtp_user, settings.smtp_password)
             server.send_message(message)
             logger.info(f"Correo enviado exitosamente a {recipient_email}")
-    except smtplib.SMTPAuthenticationError:
-        logger.error(f"Error de autenticación SMTP para {settings.smtp_user}. Verifique la contraseña de aplicación.")
+            return True
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(
+            "ERROR DE AUTENTICACIÓN SMTP para usuario %r (código %s): %s. "
+            "Causa típica: App Password incorrecto, o el valor de SMTP_PASSWORD "
+            "contiene comillas/espacios sobrantes (frecuente en Render). "
+            "El correo a %s NO fue enviado.",
+            settings.smtp_user, getattr(e, "smtp_code", "?"),
+            getattr(e, "smtp_error", b"").decode(errors="ignore") if isinstance(getattr(e, "smtp_error", b""), bytes) else e,
+            recipient_email,
+        )
+        return False
+    except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError, OSError) as e:
+        logger.error(
+            "ERROR DE CONEXIÓN SMTP a %s:%s -> %s: %s. "
+            "Verifique host/puerto y que el proveedor no bloquee el SMTP saliente. "
+            "El correo a %s NO fue enviado.",
+            settings.smtp_host, settings.smtp_port, type(e).__name__, e, recipient_email,
+        )
+        return False
     except Exception as e:
-        logger.error(f"Error al enviar correo a {recipient_email}: {str(e)}")
+        logger.error(
+            "ERROR INESPERADO al enviar correo a %s: %s: %s",
+            recipient_email, type(e).__name__, e,
+        )
+        return False
 
-def send_password_reset_email(email: str, token: str):
+def send_password_reset_email(email: str, token: str) -> bool:
     """
     Envía el enlace de recuperación de contraseña al usuario con la identidad visual de la finca.
+
+    Devuelve True si el correo se envió correctamente, False en caso contrario.
     """
+    logger.info("Iniciando envío de correo de recuperación de contraseña a %s", email)
     reset_link = f"{settings.frontend_url}/reset-password?token={token}"
     
     # Colores: 
@@ -106,4 +139,9 @@ def send_password_reset_email(email: str, token: str):
         </body>
     </html>
     """
-    send_email(email, subject, body_html)
+    enviado = send_email(email, subject, body_html)
+    if enviado:
+        logger.info("Correo de recuperación entregado a %s", email)
+    else:
+        logger.error("NO se pudo entregar el correo de recuperación a %s", email)
+    return enviado
