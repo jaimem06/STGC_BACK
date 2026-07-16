@@ -82,6 +82,7 @@ fn invoice_data_error_response(error: InvoiceDataError) -> Response {
             crate::services::receipt_service::UNPAID_ORDER_MESSAGE,
         ),
         InvoiceDataError::Validation(error) => {
+            tracing::warn!(motivo = %error, "Comprobante rechazado por validación (422)");
             error_response(StatusCode::UNPROCESSABLE_ENTITY, error.to_string())
         }
         InvoiceDataError::Database(error) => internal_error("lectura de datos del POS", error),
@@ -124,6 +125,7 @@ async fn load_invoice_data(
             String,
             Option<String>,
             Option<String>,
+            Option<String>,
             Option<DateTime<Utc>>,
             f64,
             f64,
@@ -133,8 +135,10 @@ async fn load_invoice_data(
     >(
         r#"SELECT p.id,
                   p.estado::text,
-                  NULLIF(BTRIM(CONCAT_WS(' ', p.cliente_nombre,
-                      NULLIF(to_jsonb(p)->>'cliente_apellido', ''))), ''),
+                  NULLIF(BTRIM(p.cliente_nombre), ''),
+                  -- Apellido leído por separado; el `to_jsonb` tolera esquemas del POS
+                  -- que aún no tengan la columna `cliente_apellido`.
+                  NULLIF(BTRIM(to_jsonb(p)->>'cliente_apellido'), ''),
                   p.cliente_cedula,
                   -- El POS almacena `fecha_pago` como `timestamp` sin zona (default de
                   -- Prisma). sqlx exige `timestamptz` para decodificar en DateTime<Utc>,
@@ -153,18 +157,23 @@ async fn load_invoice_data(
     .await?
     .ok_or(InvoiceDataError::NotFound)?;
 
-    let (customer_name, customer_surname) = split_customer_full_name(row.2);
-    let pos_payment_method = row.8;
+    // Si el POS guardó el apellido, se usa tal cual (nombre + apellido separados).
+    // Para pedidos antiguos sin apellido, se cae al heurístico de partir el nombre.
+    let (customer_name, customer_surname) = match row.3.clone() {
+        Some(apellido) => (row.2.clone(), Some(apellido)),
+        None => split_customer_full_name(row.2.clone()),
+    };
+    let pos_payment_method = row.9;
     let mut order = ReceiptOrder {
         pedido_id: row.0,
         estado: row.1,
         cliente_nombre: customer_name,
         cliente_apellido: customer_surname,
-        cliente_cedula: row.3,
-        fecha_pago: row.4,
-        subtotal: row.5,
-        iva: row.6,
-        total: row.7,
+        cliente_cedula: row.4,
+        fecha_pago: row.5,
+        subtotal: row.6,
+        iva: row.7,
+        total: row.8,
         items: Vec::new(),
         pagos: Vec::new(),
     };
