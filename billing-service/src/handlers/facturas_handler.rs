@@ -125,8 +125,8 @@ pub async fn registrar_movimiento_factura(
 
     let is_salida = payload.tipo.trim() == "SALIDA";
 
-    let item_data = sqlx::query!("SELECT cantidad, unidad_medida::text FROM inventario_items WHERE id = $1", payload.item_id)
-        .fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let item_data = sqlx::query_as::<_, (f64, Option<String>)>("SELECT cantidad, unidad_medida::text FROM inventario_items WHERE id = $1")
+        .bind(payload.item_id).fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let item_data = match item_data {
         Some(data) => data,
@@ -136,7 +136,7 @@ pub async fn registrar_movimiento_factura(
         }
     };
 
-    let item_um = item_data.unidad_medida.unwrap_or_else(|| "LIBRAS".to_string());
+    let item_um = item_data.1.unwrap_or_else(|| "LIBRAS".to_string());
     
     let is_mass = |u: &str| matches!(u, "QUINTALES" | "ARROBAS" | "LIBRAS" | "KILOGRAMOS");
     let converted_cantidad = if payload.unidad_medida == item_um {
@@ -163,7 +163,7 @@ pub async fn registrar_movimiento_factura(
     };
 
     if is_salida {
-        if item_data.cantidad < converted_cantidad {
+        if item_data.0 < converted_cantidad {
             tx.rollback().await.ok();
             return Ok((StatusCode::BAD_REQUEST, Json(serde_json::json!({ "message": "Stock insuficiente para realizar la salida." }))).into_response());
         }
@@ -183,12 +183,12 @@ pub async fn registrar_movimiento_factura(
     let multiplier = if is_salida { -1.0 } else { 1.0 };
     let delta = converted_cantidad * multiplier;
 
-    let item_updated = sqlx::query!(
+    let item_updated = sqlx::query_scalar::<_, Uuid>(
         "UPDATE inventario_items SET cantidad = cantidad + $1, fecha_caducidad = COALESCE($2, fecha_caducidad) WHERE id = $3 RETURNING id",
-        delta,
-        fecha_caducidad_parsed,
-        payload.item_id
     )
+    .bind(delta)
+    .bind(fecha_caducidad_parsed)
+    .bind(payload.item_id)
     .fetch_optional(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     if item_updated.is_none() {

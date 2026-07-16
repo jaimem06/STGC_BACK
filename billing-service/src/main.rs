@@ -8,7 +8,10 @@ mod handlers;
 mod middleware;
 mod models;
 mod routes;
+mod services;
 mod utils;
+
+use models::billing::BusinessInfo;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -33,8 +36,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Migrations are managed by the main inventory service, so we skip them here.
 
+    // Si falta configuración fiscal se bloquea únicamente la nueva emisión (422);
+    // las facturas de inventario existentes pueden seguir operando.
+    let business_info = BusinessInfo::from_env().unwrap_or_else(|error| {
+        tracing::warn!(%error, "Emisión HU12-A deshabilitada hasta configurar los datos fiscales");
+        BusinessInfo {
+            nombre: String::new(),
+            ruc: String::new(),
+            direccion: String::new(),
+        }
+    });
+
     // Crear el router
-    let app = routes::create_router(pool);
+    let app = routes::create_router(pool, business_info);
 
     // Configurar CORS
     let origins = env::var("ALLOWED_ORIGIN")
