@@ -256,14 +256,20 @@ export class PosService {
       montoVentasTotal += p.total;
     });
 
-    const diferencia = montoCierreFisico - (turno.montoApertura + montoVentasTotal);
-    const estadoFinal = 'CERRADO';
     const montoCierreSistema = turno.montoApertura + montoVentasTotal;
+    // Redondeamos a centavos para una comparación estable (evita descuadres por floats).
+    const diferencia = Math.round((montoCierreFisico - montoCierreSistema) * 100) / 100;
+    // Estados de cierre válidos del enum EstadoTurno (schema.prisma). El cast
+    // evita fallos de compilación si el cliente Prisma generado está desincronizado
+    // con el schema; el valor sí es válido para la columna en la base de datos.
+    const estadoFinal: 'CERRADO_CONCILIADO' | 'CERRADO_CON_DESCUADRE' =
+      diferencia === 0 ? 'CERRADO_CONCILIADO' : 'CERRADO_CON_DESCUADRE';
 
     const updatedTurno = await prisma.turno.update({
       where: { id: turno.id },
       data: {
-        estado: estadoFinal,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        estado: estadoFinal as any,
         fechaCierre: new Date(),
         montoCierreFisico,
         montoCierreSistema,
