@@ -5,13 +5,13 @@ use crate::models::{
     DashboardReport,
     MovimientoReport,
     ReportFilter,
+    SalesReportFilter,
     StockReport,
     VentaReport,
     VentaPeriodoReport,
     VentaProductoReport,
     VentaEmpleadoReport,
     VentaEmpleadoDetalleReport,
-    SalesReportFilter,
 };
 
 /// HU026 - Reporte de stock actual
@@ -85,7 +85,7 @@ pub async fn get_movements_report(
     result
 }
 
-/// HU017 - Reporte de ventas
+/// HU017 - Reporte de ventas general
 pub async fn get_sales_report(
     pool: &PgPool,
     _filter: ReportFilter,
@@ -343,7 +343,6 @@ pub async fn get_sales_by_employee_id(
 
     debug!("📝 Query de empleado específico: {}", query);
 
-    // Convertir String a UUID
     let empleado_uuid = uuid::Uuid::parse_str(&empleado_id)
         .map_err(|e| {
             error!("❌ Error al parsear UUID: {}", e);
@@ -363,4 +362,40 @@ pub async fn get_sales_by_employee_id(
     }
 
     result
+}
+
+/// Obtener lista de semanas disponibles con ventas
+pub async fn get_available_weeks(
+    pool: &PgPool,
+) -> Result<Vec<serde_json::Value>, sqlx::Error> {
+    debug!("🔍 Ejecutando get_available_weeks");
+
+    let query = r#"
+        SELECT DISTINCT
+            TO_CHAR(DATE_TRUNC('week', fecha), 'YYYY-MM-DD') AS inicio_semana,
+            TO_CHAR(DATE_TRUNC('week', fecha) + INTERVAL '6 days', 'YYYY-MM-DD') AS fin_semana,
+            EXTRACT(WEEK FROM fecha)::integer AS numero_semana,
+            TO_CHAR(DATE_TRUNC('week', fecha), 'YYYY') AS año
+        FROM ventas
+        ORDER BY inicio_semana DESC
+    "#;
+
+    let result = sqlx::query_as::<_, (String, String, i32, String)>(query)
+        .fetch_all(pool)
+        .await?;
+
+    let weeks: Vec<serde_json::Value> = result
+        .into_iter()
+        .map(|(inicio, fin, numero, año)| {
+            serde_json::json!({
+                "inicio": inicio,
+                "fin": fin,
+                "numero_semana": numero,
+                "año": año,
+                "label": format!("Semana {} ({})", numero, año)
+            })
+        })
+        .collect();
+
+    Ok(weeks)
 }

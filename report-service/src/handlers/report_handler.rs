@@ -480,6 +480,46 @@ pub async fn get_sales_by_employee_id(
     }
 }
 
+/// Obtener lista de semanas disponibles con ventas
+#[utoipa::path(
+    get,
+    path = "/reports/sales/weeks",
+    tag = "Reportes",
+    responses(
+        (
+            status = 200,
+            description = "Lista de semanas disponibles",
+            body = Vec<serde_json::Value>
+        ),
+        (
+            status = 401,
+            description = "No autorizado - Token inválido o ausente"
+        ),
+        (
+            status = 500,
+            description = "Error interno del servidor"
+        )
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
+pub async fn get_available_weeks(
+    State(pool): State<PgPool>,
+) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
+    match report_service::get_available_weeks(&pool).await {
+        Ok(weeks) => {
+            tracing::info!("✅ Semanas disponibles: {} registros", weeks.len());
+            Ok(Json(weeks))
+        },
+        Err(e) => {
+            error!("❌ Error en get_available_weeks: {}", e);
+            let error_msg = format!("Error al obtener semanas disponibles: {}", e);
+            Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
+        }
+    }
+}
+
 /// ENDPOINT DE PRUEBA - Test de conexión a DB
 #[utoipa::path(
     get,

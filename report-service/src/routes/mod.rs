@@ -63,6 +63,8 @@ pub fn create_router(pool: PgPool) -> Router {
         .route("/reports/sales/by-employee", get(report_handler::get_sales_by_employee))
         // Reporte de ventas por empleado específico (con path param)
         .route("/reports/sales/by-employee/:empleado_id", get(report_handler::get_sales_by_employee_id))
+        // Semanas disponibles
+        .route("/reports/sales/weeks", get(report_handler::get_available_weeks))
         .layer(middleware::from_fn(auth_middleware));
 
     // ============================================

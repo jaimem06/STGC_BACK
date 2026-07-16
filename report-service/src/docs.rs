@@ -30,6 +30,8 @@ use crate::models::{
         crate::handlers::report_handler::get_sales_by_product,
         crate::handlers::report_handler::get_sales_by_employee,
         crate::handlers::report_handler::get_sales_by_employee_id,
+        // Semanas disponibles
+        crate::handlers::report_handler::get_available_weeks,
         // Test
         crate::handlers::report_handler::test_db_connection,
     ),
