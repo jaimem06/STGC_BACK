@@ -115,17 +115,6 @@ pub struct CreateEntradaFacturaDto {
     pub tipo: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, ToSchema)]
-pub struct MovimientoStockDto {
-    pub id: Uuid,
-    pub item_id: Uuid,
-    pub cantidad: f64,
-    pub tipo: String,
-    pub fecha: DateTime<Utc>,
-    pub motivo: String,
-    pub numero_factura: Option<String>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub struct BusinessInfo {
     pub nombre: String,
