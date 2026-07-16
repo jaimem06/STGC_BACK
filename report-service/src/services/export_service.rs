@@ -16,146 +16,158 @@ pub fn generate_html_report(
     }
 
     let mut html = String::new();
-    
-    // CSS completo para impresión
-    html.push_str(r#"
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <title>"#);
+
+    // Documento HTML profesional (sin emojis) con identidad visual STGC.
+    html.push_str(r#"<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>"#);
     html.push_str(title);
     html.push_str(r#"</title>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { 
-                font-family: 'Arial', sans-serif; 
-                padding: 20px; 
-                background: #f8f9fa;
-            }
-            .container { 
-                max-width: 1200px; 
-                margin: 0 auto; 
-                background: white; 
-                padding: 30px; 
-                border-radius: 8px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            }
-            h1 { 
-                color: #2c3e50; 
-                border-bottom: 3px solid #3498db; 
-                padding-bottom: 15px;
-                font-size: 24px;
-                margin-bottom: 10px;
-            }
-            .subtitle { 
-                color: #7f8c8d; 
-                font-size: 14px; 
-                margin-bottom: 20px; 
-                display: flex;
-                justify-content: space-between;
-            }
-            .table-container { 
-                overflow-x: auto; 
-                margin-top: 20px; 
-            }
-            table { 
-                width: 100%; 
-                border-collapse: collapse; 
-                font-size: 13px; 
-            }
-            th { 
-                background-color: #2c3e50; 
-                color: white; 
-                padding: 12px; 
-                text-align: left; 
-                border: 1px solid #ddd; 
-                font-weight: bold;
-                white-space: nowrap;
-            }
-            td { 
-                padding: 10px; 
-                border: 1px solid #ddd; 
-                word-break: break-word;
-            }
-            tr:nth-child(even) { 
-                background-color: #f8f9fa; 
-            }
-            tr:hover { 
-                background-color: #e8f4fd; 
-            }
-            .footer { 
-                margin-top: 30px; 
-                font-size: 12px; 
-                color: #7f8c8d; 
-                text-align: center; 
-                border-top: 1px solid #ddd; 
-                padding-top: 15px; 
-            }
-            .badge {
-                display: inline-block;
-                padding: 3px 8px;
-                border-radius: 4px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            .badge-success { background: #d4edda; color: #155724; }
-            .badge-danger { background: #f8d7da; color: #721c24; }
-            .badge-warning { background: #fff3cd; color: #856404; }
-
-            /* Estilos para impresión */
-            @media print {
-                body { background: white; padding: 0; }
-                .container { box-shadow: none; padding: 20px; }
-                .no-print { display: none !important; }
-                th { background-color: #2c3e50 !important; color: white !important; }
-                tr:nth-child(even) { background-color: #f2f2f2 !important; }
-            }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                <h1>📊 "#);
+    <style>
+        :root {
+            --brand: #442a22;
+            --brand-soft: #5d4037;
+            --accent: #b17036;
+            --line: #e7ded4;
+            --ink: #1f1b14;
+            --muted: #6f625c;
+            --bg: #f7f3ee;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--ink);
+            padding: 32px 20px;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+        .sheet {
+            max-width: 1100px;
+            margin: 0 auto;
+            background: #ffffff;
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(31, 27, 20, 0.08);
+        }
+        .head {
+            padding: 28px 36px;
+            border-bottom: 3px solid var(--brand);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-end;
+            gap: 24px;
+        }
+        .brand {
+            font-size: 11px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: var(--accent);
+            font-weight: 700;
+        }
+        h1 {
+            font-size: 22px;
+            color: var(--brand);
+            margin-top: 6px;
+            font-weight: 800;
+            letter-spacing: -0.01em;
+        }
+        .btn {
+            border: 0;
+            background: var(--brand);
+            color: #ffffff;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s ease;
+        }
+        .btn:hover { background: var(--brand-soft); }
+        .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 28px;
+            padding: 16px 36px;
+            background: #faf7f3;
+            border-bottom: 1px solid var(--line);
+            font-size: 12px;
+            color: var(--muted);
+        }
+        .meta b { color: var(--ink); font-weight: 600; }
+        .table-wrap { padding: 12px 24px 24px; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        thead th {
+            background: var(--brand);
+            color: #ffffff;
+            text-align: left;
+            padding: 11px 14px;
+            font-weight: 600;
+            font-size: 11px;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+            white-space: nowrap;
+        }
+        thead th:first-child { border-top-left-radius: 8px; }
+        thead th:last-child { border-top-right-radius: 8px; }
+        tbody td { padding: 10px 14px; border-bottom: 1px solid var(--line); color: var(--ink); }
+        tbody tr:nth-child(even) { background: #faf7f3; }
+        tbody tr:last-child td { border-bottom: 0; }
+        .foot {
+            padding: 18px 36px;
+            border-top: 1px solid var(--line);
+            font-size: 11px;
+            color: var(--muted);
+            display: flex;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        @media print {
+            body { background: #ffffff; padding: 0; }
+            .sheet { box-shadow: none; border: 0; border-radius: 0; max-width: none; }
+            .no-print { display: none !important; }
+            thead th { background: var(--brand) !important; color: #ffffff !important; }
+            tbody tr:nth-child(even) { background: #f4f0ea !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="sheet">
+        <div class="head">
+            <div>
+                <div class="brand">STGC &middot; Ruta del Caf&eacute; de Loja</div>
+                <h1>"#);
     html.push_str(title);
     html.push_str(r#"</h1>
-                <div class="no-print">
-                    <button onclick="window.print()" style="
-                        padding: 10px 20px; 
-                        background: #3498db; 
-                        color: white; 
-                        border: none; 
-                        border-radius: 4px; 
-                        cursor: pointer;
-                        font-size: 14px;
-                    ">
-                        🖨️ Imprimir / Guardar PDF
-                    </button>
-                </div>
             </div>
-            <div class="subtitle">
-                <span>📅 Fecha: "#);
+            <button class="btn no-print" onclick="window.print()">Imprimir / Guardar PDF</button>
+        </div>
+        <div class="meta">
+            <span>Generado: <b>"#);
     html.push_str(&chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
-    html.push_str(r#"</span>
-                <span>📈 Total registros: "#);
+    html.push_str(r#"</b></span>
+            <span>Registros: <b>"#);
     html.push_str(&data.len().to_string());
-    html.push_str(r#"</span>
-            </div>
-            <div class="table-container">
-                <table>
-                    <thead>
-                        <tr>
-    "#);
+    html.push_str(r#"</b></span>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>"#);
 
     // Encabezados
     for header in headers {
         html.push_str(&format!("<th>{}</th>", header));
     }
-    html.push_str(r#"
-                        </tr>
-                    </thead>
-                    <tbody>
-    "#);
+    html.push_str(r#"</tr>
+                </thead>
+                <tbody>"#);
 
     // Datos - Todos los registros (sin límite)
     for record in data {
@@ -172,24 +184,18 @@ pub fn generate_html_report(
         html.push_str("</tr>");
     }
 
-    html.push_str(r#"
-                    </tbody>
-                </table>
-            </div>
-            <div class="footer">
-                <p>STGC Report Service v1.0 | Ruta del Café de Loja</p>
-                <p>Generado el "#);
-    html.push_str(&chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
-    html.push_str(r#"</p>
-            </div>
+    html.push_str(r#"</tbody>
+            </table>
         </div>
-        <script>
-            // Auto-print al cargar (opcional)
-            // window.print();
-        </script>
-    </body>
-    </html>
-    "#);
+        <div class="foot">
+            <span>STGC Report Service &middot; Sistema de Trazabilidad y Gesti&oacute;n Cafetera</span>
+            <span>"#);
+    html.push_str(&chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+    html.push_str(r#"</span>
+        </div>
+    </div>
+</body>
+</html>"#);
 
     Ok(html)
 }
