@@ -41,8 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = routes::create_router(pool);
 
     // Configurar CORS
-    let origins = env::var("ALLOWED_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:3000,http://localhost:3001".to_string());
+    let origins = env::var("ALLOWED_ORIGIN").unwrap_or_else(|_| {
+        "http://localhost:3000,http://localhost:3001,https://stgc-web.onrender.com".to_string()
+    });
 
     let mut cors = tower_http::cors::CorsLayer::new();
 
@@ -51,9 +52,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let allowed_origins: Vec<axum::http::HeaderValue> = origins
             .split(',')
-            .map(|s| s.trim().parse().unwrap())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| match s.parse::<axum::http::HeaderValue>() {
+                Ok(origin) => Some(origin),
+                Err(error) => {
+                    tracing::warn!(origen = %s, %error, "ALLOWED_ORIGIN inválido, se ignora");
+                    None
+                }
+            })
             .collect();
 
+        if allowed_origins.is_empty() {
+            panic!("ALLOWED_ORIGIN no contiene ningún origen válido: {origins}");
+        }
+
+        tracing::info!(origenes = ?allowed_origins, "CORS configurado");
         cors = cors.allow_origin(allowed_origins);
     }
 
