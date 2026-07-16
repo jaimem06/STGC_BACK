@@ -89,6 +89,33 @@ fn invoice_data_error_response(error: InvoiceDataError) -> Response {
     }
 }
 
+/// Identificación genérica del consumidor final según el SRI (13 nueves).
+const FINAL_CONSUMER_ID: &str = "9999999999999";
+
+/// Venta a consumidor final: sin cédula/RUC real (vacía o solo nueves) o sin
+/// nombre del cliente no procede una factura con datos, así que el comprobante
+/// se emite a nombre de "Consumidor Final" con la identificación genérica del
+/// SRI en lugar de rechazarse con 422.
+fn normalize_final_consumer(
+    nombre: Option<String>,
+    apellido: Option<String>,
+    cedula: Option<String>,
+) -> (Option<String>, Option<String>, Option<String>) {
+    let cedula_texto = cedula.as_deref().unwrap_or("").trim().to_owned();
+    let sin_cedula_real = cedula_texto.is_empty() || cedula_texto.chars().all(|c| c == '9');
+    let sin_nombre = nombre.as_deref().unwrap_or("").trim().is_empty();
+
+    if sin_cedula_real || sin_nombre {
+        (
+            Some("Consumidor".to_owned()),
+            Some("Final".to_owned()),
+            Some(FINAL_CONSUMER_ID.to_owned()),
+        )
+    } else {
+        (nombre, apellido, cedula)
+    }
+}
+
 /// El contrato POS publica un único campo `cliente_nombre`. Para cumplir CA1 sin
 /// exigir una columna inexistente, se interpreta la última palabra como apellido.
 /// Versiones ampliadas que sí tienen `cliente_apellido` se combinan en la consulta.
@@ -163,13 +190,15 @@ async fn load_invoice_data(
         Some(apellido) => (row.2.clone(), Some(apellido)),
         None => split_customer_full_name(row.2.clone()),
     };
+    let (customer_name, customer_surname, customer_id) =
+        normalize_final_consumer(customer_name, customer_surname, row.4.clone());
     let pos_payment_method = row.9;
     let mut order = ReceiptOrder {
         pedido_id: row.0,
         estado: row.1,
         cliente_nombre: customer_name,
         cliente_apellido: customer_surname,
-        cliente_cedula: row.4,
+        cliente_cedula: customer_id,
         fecha_pago: row.5,
         subtotal: row.6,
         iva: row.7,
@@ -463,6 +492,50 @@ mod tests {
     }
 
     #[test]
+    fn ventas_sin_identificacion_se_emiten_a_consumidor_final() {
+        // Sin cédula → consumidor final.
+        assert_eq!(
+            normalize_final_consumer(Some("Juan".into()), None, None),
+            (
+                Some("Consumidor".into()),
+                Some("Final".into()),
+                Some(FINAL_CONSUMER_ID.into())
+            )
+        );
+        // Cédula genérica de nueves (10 o 13) → consumidor final.
+        assert_eq!(
+            normalize_final_consumer(Some("Consumidor Final".into()), None, Some("9999999999".into())),
+            (
+                Some("Consumidor".into()),
+                Some("Final".into()),
+                Some(FINAL_CONSUMER_ID.into())
+            )
+        );
+        // Sin nombre → consumidor final aunque haya cédula.
+        assert_eq!(
+            normalize_final_consumer(None, None, Some("1712345678".into())),
+            (
+                Some("Consumidor".into()),
+                Some("Final".into()),
+                Some(FINAL_CONSUMER_ID.into())
+            )
+        );
+        // Cliente con datos completos → se conservan tal cual.
+        assert_eq!(
+            normalize_final_consumer(
+                Some("Ana".into()),
+                Some("Pérez".into()),
+                Some("1712345678".into())
+            ),
+            (
+                Some("Ana".into()),
+                Some("Pérez".into()),
+                Some("1712345678".into())
+            )
+        );
+    }
+
+    #[test]
     fn pos_full_name_is_adapted_without_requiring_cliente_apellido() {
         assert_eq!(
             split_customer_full_name(Some("María Fernanda López".into())),
@@ -513,14 +586,17 @@ mod tests {
 
     #[test]
     fn migrations_persist_data_and_remove_pdf_blobs() {
+        // El esquema efectivo lo garantiza ensure_billing_schema (main.rs): sin
+        // columnas de PDF persistido y con datos JSONB + rehidratación opcional.
         let initial = include_str!("../../migrations/20260715000000_hu12a_comprobantes.sql");
-        let transition = include_str!("../../migrations/20260715020000_pdf_temporal_on_demand.sql");
+        let bootstrap = include_str!("../../src/main.rs");
 
-        assert!(initial.contains("datos JSONB NOT NULL"));
-        assert!(!initial.contains("pdf BYTEA"));
-        assert!(transition.contains("DROP COLUMN IF EXISTS pdf"));
-        assert!(transition.contains("DROP COLUMN IF EXISTS pdf_sha256"));
-        assert!(transition.contains("CHECK (datos IS NOT NULL OR requiere_rehidratacion)"));
+        let initial_normalized = initial.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(initial_normalized.contains("datos JSONB NOT NULL"));
+        assert!(!initial_normalized.contains("pdf BYTEA"));
+        assert!(!bootstrap.contains("pdf BYTEA"));
+        assert!(bootstrap.contains("requiere_rehidratacion BOOLEAN NOT NULL DEFAULT FALSE"));
+        assert!(bootstrap.contains("CHECK (datos IS NOT NULL OR requiere_rehidratacion)"));
     }
 
     #[test]
