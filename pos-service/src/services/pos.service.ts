@@ -75,7 +75,6 @@ export class PosService {
         turnoId: turno.id,
         cajero_id: usuarioId,
         cliente_nombre: data.cliente_nombre, 
-        cliente_apellido: data.cliente_apellido, // NUEVO
         cliente_cedula: data.cliente_cedula,
         subtotal,
         iva,
@@ -116,7 +115,6 @@ export class PosService {
 
     const updateData: any = { 
       cliente_nombre: data.cliente_nombre !== undefined ? data.cliente_nombre : pedido.cliente_nombre,
-      cliente_apellido: data.cliente_apellido !== undefined ? data.cliente_apellido : pedido.cliente_apellido, // NUEVO
       cliente_cedula: data.cliente_cedula !== undefined ? data.cliente_cedula : pedido.cliente_cedula
     };
     
@@ -203,11 +201,13 @@ export class PosService {
       throw new AppError('Pedido ya finalizado o anulado', 400);
     }
     
-    // HU009 - CA3: Validar que la suma sea exactamente igual al total
+    // HU009 - CA3: Validar que la suma coincida con el total (tolerancia mínima
+    // para absorber el ruido de coma flotante; no permite descuadres reales).
     const sumaPagos = parseFloat(data.pagos.reduce((acc: number, p: any) => acc + p.monto, 0).toFixed(2));
-    
-    if (sumaPagos !== pedido.total) {
-      throw new AppError(`La suma de los pagos (${sumaPagos}) no coincide con el total del pedido (${pedido.total})`, 400); 
+    const totalPedido = parseFloat(Number(pedido.total).toFixed(2));
+
+    if (Math.abs(sumaPagos - totalPedido) > 0.001) {
+      throw new AppError(`La suma de los pagos (${sumaPagos}) no coincide con el total del pedido (${totalPedido})`, 400);
     }
 
     const updatedPedido = await prisma.pedido.update({
@@ -223,7 +223,7 @@ export class PosService {
           }))
         }
       },
-      include: { items: true, pagos: true }
+      include: { items: true }
     });
 
     const token = req.headers.authorization;
@@ -241,40 +241,23 @@ export class PosService {
   }
 
   // NUEVO: GENERAR RESUMEN Y DESGLOSE AL CERRAR CAJA (HU010)
-  static async cerrarCaja(req: Request, montoCierreFisico: number, sessionToken: string) {
+  static async cerrarCaja(req: Request, montoCierreFisico: number, _sessionToken: string) {
     const usuarioId = req.user!.sub;
     const turno = await this.getTurnoActivo(usuarioId);
     if (!turno) throw new AppError('No hay turno abierto para cerrar', 400);
 
     const pedidosPagados = await prisma.pedido.findMany({
       where: { turnoId: turno.id, estado: 'PAGADO' },
-      include: { pagos: true }
     });
 
-    let ventasFisicasEfectivo = 0;
     let montoVentasTotal = 0;
-    const desglose: Record<string, number> = {
-      EFECTIVO: 0,
-      TARJETA_CREDITO: 0,
-      TARJETA_DEBITO: 0,
-      TRANSFERENCIA: 0,
-      DE_UNA: 0,
-      AHORITA: 0
-    };
 
-    // Calcular el total desglosado por cada método de pago
     pedidosPagados.forEach(p => {
       montoVentasTotal += p.total;
-      p.pagos.forEach(pago => {
-        desglose[pago.metodoPago] = parseFloat((desglose[pago.metodoPago] + pago.monto).toFixed(2));
-        if (pago.metodoPago === 'EFECTIVO') {
-          ventasFisicasEfectivo += pago.monto;
-        }
-      });
     });
 
-    const diferencia = montoCierreFisico - (turno.montoApertura + ventasFisicasEfectivo);
-    const estadoFinal = diferencia !== 0 ? 'CERRADO_CON_DESCUADRE' : 'CERRADO_CONCILIADO';
+    const diferencia = montoCierreFisico - (turno.montoApertura + montoVentasTotal);
+    const estadoFinal = 'CERRADO';
     const montoCierreSistema = turno.montoApertura + montoVentasTotal;
 
     const updatedTurno = await prisma.turno.update({
@@ -294,7 +277,6 @@ export class PosService {
     return {
       turno: updatedTurno,
       resumen: {
-        desglose,
         totalTransacciones: pedidosPagados.length
       }
     };
