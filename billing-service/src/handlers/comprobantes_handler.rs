@@ -136,7 +136,10 @@ async fn load_invoice_data(
                   NULLIF(BTRIM(CONCAT_WS(' ', p.cliente_nombre,
                       NULLIF(to_jsonb(p)->>'cliente_apellido', ''))), ''),
                   p.cliente_cedula,
-                  p.fecha_pago,
+                  -- El POS almacena `fecha_pago` como `timestamp` sin zona (default de
+                  -- Prisma). sqlx exige `timestamptz` para decodificar en DateTime<Utc>,
+                  -- así que lo interpretamos explícitamente como UTC.
+                  p.fecha_pago AT TIME ZONE 'UTC',
                   p.subtotal,
                   p.iva,
                   p.total,
