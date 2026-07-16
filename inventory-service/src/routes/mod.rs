@@ -20,7 +20,6 @@ use crate::models::*;
         pos_inventory_handler::delete_item,
         pos_inventory_handler::create_movement,
         pos_inventory_handler::list_movements,
-        pos_inventory_handler::export_all_movements_csv,
         finca_inventory_handler::list_items,
         finca_inventory_handler::get_item,
         finca_inventory_handler::create_item,
@@ -29,7 +28,6 @@ use crate::models::*;
         finca_inventory_handler::delete_item,
         finca_inventory_handler::create_movement,
         finca_inventory_handler::list_movements,
-        finca_inventory_handler::export_all_movements_csv,
         traceability_handler::list_lots,
         traceability_handler::transition_lot_phase,
         traceability_handler::get_traceability_history,
@@ -84,7 +82,6 @@ pub fn create_router(pool: PgPool) -> Router {
         .route("/inventario/pos/alertas-stock", get(pos_inventory_handler::list_alertas_stock))
         .route("/inventario/pos/stats", get(pos_inventory_handler::get_stats))
         .route("/inventario/pos/movimientos", post(pos_inventory_handler::create_movement))
-        .route("/inventario/pos/movimientos/exportar", get(pos_inventory_handler::export_all_movements_csv))
         .route("/inventario/pos/:id", get(pos_inventory_handler::get_item).put(pos_inventory_handler::update_item).delete(pos_inventory_handler::delete_item))
         .route("/inventario/pos/:id/estado", patch(pos_inventory_handler::update_status))
         .route("/inventario/pos/:id/restaurar", patch(pos_inventory_handler::restore_item))
@@ -99,7 +96,6 @@ pub fn create_router(pool: PgPool) -> Router {
         .route("/inventario/finca/alertas-stock", get(finca_inventory_handler::list_alertas_stock))
         .route("/inventario/finca/stats", get(finca_inventory_handler::get_stats))
         .route("/inventario/finca/movimientos", post(finca_inventory_handler::create_movement))
-        .route("/inventario/finca/movimientos/exportar", get(finca_inventory_handler::export_all_movements_csv))
         .route("/inventario/finca/:id", get(finca_inventory_handler::get_item).put(finca_inventory_handler::update_item).delete(finca_inventory_handler::delete_item))
         .route("/inventario/finca/:id/estado", patch(finca_inventory_handler::update_status))
         .route("/inventario/finca/:id/restaurar", patch(finca_inventory_handler::restore_item))

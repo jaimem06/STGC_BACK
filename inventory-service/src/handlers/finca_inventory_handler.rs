@@ -1,6 +1,6 @@
 use axum::{
     extract::{ Path, State, Query },
-    http::{ StatusCode, header },
+    http::StatusCode,
     response::IntoResponse,
     Json,
     Extension,
@@ -532,64 +532,6 @@ pub async fn list_movements(
         .fetch_all(&pool).await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(movements))
-}
-
-#[utoipa::path(
-    get,
-    path = "/inventario/finca/movimientos/exportar",
-    tag = "Inventario Finca",
-    params(MovementFilter),
-    security(("bearer_auth" = [])),
-    responses(
-        (status = 200, description = "CSV de auditoría de finca generado", content_type = "text/csv"),
-        (status = 401, description = "No autorizado")
-    ),
-    summary = "Exportar auditoría general finca (CSV)",
-    description = "HU026: Genera un archivo CSV con el reporte total de movimientos del módulo de finca."
-)]
-pub async fn export_all_movements_csv(
-    State(pool): State<PgPool>,
-    Extension(user_id): Extension<String>,
-    Query(filter): Query<MovementFilter>
-) -> impl IntoResponse {
-    let start = parse_flex_date(filter.start_date);
-    let end = parse_flex_date(filter.end_date);
-
-    let movements = sqlx
-        ::query_as::<_, MovimientoStock>(
-            "SELECT m.* FROM movimientos_stock m JOIN inventario_items i ON m.item_id = i.id
-         WHERE i.modulo = 'FINCA' AND (m.fecha >= $1 OR $1 IS NULL) AND (m.fecha <= $2 OR $2 IS NULL) ORDER BY m.fecha DESC"
-        )
-        .bind(start)
-        .bind(end)
-        .fetch_all(&pool).await
-        .unwrap_or_default();
-
-    let mut wtr = csv::Writer::from_writer(vec![]);
-    wtr.write_record(["ID", "ItemID", "Cantidad", "Tipo", "Fecha", "Motivo", "NumeroFactura"]).unwrap();
-    for m in movements {
-        wtr.write_record([
-            m.id.to_string(),
-            m.item_id.to_string(),
-            m.cantidad.to_string(),
-            format!("{:?}", m.tipo),
-            m.fecha.to_rfc3339(),
-            m.motivo,
-            m.numero_factura.unwrap_or_default(),
-        ]).unwrap();
-    }
-    let csv_data = wtr.into_inner().unwrap();
-
-    enviar_auditoria(user_id, "FINCA_EXPORT_CSV".to_string(), "/inventario/finca/movimientos/exportar".to_string(), "N/A".to_string());
-
-    (
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "text/csv"),
-            (header::CONTENT_DISPOSITION, "attachment; filename=\"movimientos_finca.csv\""),
-        ],
-        csv_data,
-    )
 }
 
 // --- HU024: papelera (baja / restauración) ---

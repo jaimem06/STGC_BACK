@@ -121,8 +121,8 @@ pub fn validate_create_item(payload: &CreateInventarioItem) -> Result<(), String
         return Err("El stock mínimo es obligatorio.".into());
     }
     let minimo = payload.stock_minimo.unwrap();
-    if minimo < 0.0 {
-        return Err("El stock mínimo no puede ser un número negativo.".into());
+    if minimo <= 0.0 {
+        return Err("El stock mínimo debe ser mayor a 0.".into());
     }
     if minimo.fract().abs() > 1e-6 {
         return Err("El stock mínimo debe ser un número entero.".into());
@@ -193,8 +193,8 @@ pub fn validate_update_item(payload: &UpdateInventarioItem) -> Result<(), String
     }
 
     if let Some(minimo) = payload.stock_minimo {
-        if minimo < 0.0 {
-            return Err("El stock mínimo no puede ser un número negativo.".into());
+        if minimo <= 0.0 {
+            return Err("El stock mínimo debe ser mayor a 0.".into());
         }
         if minimo.fract().abs() > 1e-6 {
             return Err("El stock mínimo debe ser un número entero.".into());
