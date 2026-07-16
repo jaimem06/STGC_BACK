@@ -77,7 +77,7 @@ use crate::models::{
     ),
     info(
         title = "Report Service API",
-        description = "Servicio de reportes para el sistema STGC - Ruta del Café de Loja",
+        description = "Servicio de reportes para el sistema STGC - Tierra Fertil",
         version = "1.0.0",
         contact(
             name = "STGC Team",

@@ -9,7 +9,7 @@ pub fn generate_html_report(
     headers: &[String],
     title: &str,
 ) -> Result<String, String> {
-    info!("📄 Generando HTML para reporte: {} registros", data.len());
+    info!("Generando HTML para reporte: {} registros", data.len());
 
     if data.is_empty() {
         return Ok("<p>No hay datos disponibles</p>".to_string());
@@ -141,7 +141,7 @@ pub fn generate_html_report(
     <div class="sheet">
         <div class="head">
             <div>
-                <div class="brand">STGC &middot; Ruta del Caf&eacute; de Loja</div>
+                <div class="brand">STGC &middot; Tierra Fertil</div>
                 <h1>"#);
     html.push_str(title);
     html.push_str(r#"</h1>
@@ -206,30 +206,38 @@ pub fn export_csv_from_data(
     headers: &[String],
     title: &str,
 ) -> Result<Vec<u8>, String> {
-    info!("📊 Generando CSV desde datos del frontend: {} registros", data.len());
+    info!("Generando CSV desde datos del frontend: {} registros", data.len());
 
     if data.is_empty() {
         return Err("No hay datos para exportar".to_string());
     }
 
+    // Delimitador `;`: es el separador de listas que Excel espera en locales
+    // en español (es-EC), de modo que el archivo abre en columnas al hacer
+    // doble clic. `flexible` permite filas de metadatos con menos columnas.
     let mut wtr = WriterBuilder::new()
-        .delimiter(b',')
+        .delimiter(b';')
         .terminator(csv::Terminator::CRLF)
         .quote_style(csv::QuoteStyle::Necessary)
+        .flexible(true)
         .from_writer(vec![]);
 
-    // Título como comentario
-    let title_line = format!(
-        "# {}\n# Fecha: {}\n# Total registros: {}\n",
-        title,
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
-        data.len()
-    );
+    // Bloque de metadatos, cada dato en su propia fila (legible en la hoja).
+    wtr.write_record([title]).map_err(|e| e.to_string())?;
+    wtr.write_record([
+        "Generado",
+        &chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    ])
+    .map_err(|e| e.to_string())?;
+    wtr.write_record(["Registros", &data.len().to_string()])
+        .map_err(|e| e.to_string())?;
+    // Fila en blanco para separar los metadatos de la tabla.
+    wtr.write_record(Vec::<&str>::new()).map_err(|e| e.to_string())?;
 
-    // Escribir encabezados
+    // Encabezados de la tabla
     wtr.write_record(headers).map_err(|e| e.to_string())?;
 
-    // Escribir datos
+    // Filas de datos
     for record in data {
         if let Some(obj) = record.as_object() {
             let row: Vec<String> = headers.iter()
@@ -245,10 +253,13 @@ pub fn export_csv_from_data(
     }
 
     let csv_data = wtr.into_inner().map_err(|e| e.to_string())?;
-    let mut final_data = title_line.into_bytes();
-    final_data.extend(csv_data);
 
-    info!("✅ CSV generado exitosamente: {} bytes", final_data.len());
+    // BOM UTF-8 para que Excel interprete correctamente los acentos (á, é, ñ...).
+    let mut final_data = Vec::with_capacity(csv_data.len() + 3);
+    final_data.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    final_data.extend_from_slice(&csv_data);
+
+    info!("CSV generado exitosamente: {} bytes", final_data.len());
     Ok(final_data)
 }
 
@@ -258,7 +269,7 @@ pub fn export_pdf_from_data(
     headers: &[String],
     title: &str,
 ) -> Result<String, String> {
-    info!("📄 Generando HTML para PDF: {} registros", data.len());
+    info!("Generando HTML para PDF: {} registros", data.len());
 
     if data.is_empty() {
         return Err("No hay datos para exportar".to_string());
