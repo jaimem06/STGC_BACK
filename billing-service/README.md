@@ -74,3 +74,17 @@ billing-service/
 - **SQLx**: Acceso a bases de datos PostgreSQL de forma asíncrona y transaccional.
 - **Utoipa / ReDoc**: Para la especificación automática del API.
 - **Chrono**: Procesamiento robusto de fechas y validación de caducidad temporal.
+
+## Emisión de comprobantes
+
+El servicio también permite emitir y descargar comprobantes PDF de pedidos pagados:
+
+- `GET /api/billing/facturas/estados`
+- `POST /api/billing/comprobantes/{pedido_id}/emitir`
+- `GET /api/billing/comprobantes/{pedido_id}/pdf`
+
+Los estados de factura admitidos son exclusivamente `BORRADOR`, `PENDIENTE`, `PAGADA`, `ANULADA` y `REEMBOLSADA`. No deben confundirse con los estados del pedido POS.
+
+Los datos completos de cada factura se persisten como snapshot JSONB. El PDF no se almacena en disco ni en la base: se genera temporalmente en memoria al invocar la ruta de descarga.
+
+Consulte `docs/EMISION_DE_COMPROBANTES.md`, `docs/COMPATIBILIDAD_POS.md`, `docs/HU12A_CASOS_DE_PRUEBA.md` y `docs/HU12A_INFORME_COBERTURA.md` para el contrato, compatibilidad POS, trazabilidad CA1-CA6 y cobertura.
