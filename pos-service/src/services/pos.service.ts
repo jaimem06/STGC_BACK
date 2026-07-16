@@ -74,7 +74,8 @@ export class PosService {
       data: {
         turnoId: turno.id,
         cajero_id: usuarioId,
-        cliente_nombre: data.cliente_nombre, 
+        cliente_nombre: data.cliente_nombre,
+        cliente_apellido: data.cliente_apellido,
         cliente_cedula: data.cliente_cedula,
         subtotal,
         iva,
@@ -113,8 +114,9 @@ export class PosService {
       throw new AppError('El pedido no puede ser modificado porque ya se encuentra en estado Pagado/Cerrado/Facturado/Anulado', 400);
     }
 
-    const updateData: any = { 
+    const updateData: any = {
       cliente_nombre: data.cliente_nombre !== undefined ? data.cliente_nombre : pedido.cliente_nombre,
+      cliente_apellido: data.cliente_apellido !== undefined ? data.cliente_apellido : pedido.cliente_apellido,
       cliente_cedula: data.cliente_cedula !== undefined ? data.cliente_cedula : pedido.cliente_cedula
     };
     
