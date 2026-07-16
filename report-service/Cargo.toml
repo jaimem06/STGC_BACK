@@ -25,5 +25,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 jsonwebtoken = "9"
 http = "1.0"
 
-# Documentación - Solo utoipa (sin utoipa-redoc)
+# Documentación
 utoipa = { version = "4.2", features = ["axum_extras", "chrono", "uuid"] }
+
+# Exportación - Solo CSV
+csv = "1.3"
