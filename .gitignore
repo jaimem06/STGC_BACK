@@ -1,3 +1,4 @@
 /report-service/target/debug
+/report-service/target/release
 
 report-service/.env
