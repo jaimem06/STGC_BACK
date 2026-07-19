@@ -29,9 +29,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await
         .expect("No se pudo conectar a la base de datos");
 
-    // Ejecutar migraciones de base de datos automáticamente al inicio
+    // Ejecutar migraciones de base de datos automáticamente al inicio.
+    // ignore_missing: la tabla public._sqlx_migrations es compartida con otros
+    // servicios de la misma BD (p. ej. una migración antigua del report-service
+    // quedó registrada ahí); sin esto, sqlx aborta con VersionMissing al ver
+    // versiones que no pertenecen a este servicio.
     tracing::info!("Ejecutando migraciones de base de datos...");
-    sqlx::migrate!("./migrations")
+    let mut migrator = sqlx::migrate!("./migrations");
+    migrator.set_ignore_missing(true);
+    migrator
         .run(&pool)
         .await
         .expect("Fallo al ejecutar las migraciones de base de datos");
