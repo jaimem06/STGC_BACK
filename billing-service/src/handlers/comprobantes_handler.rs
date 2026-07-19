@@ -1,17 +1,19 @@
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     Extension, Json,
 };
 use chrono::{DateTime, Utc};
+use serde::Deserialize;
 use sqlx::{types::Json as SqlJson, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::models::billing::{
-    BillingErrorResponse, BusinessInfo, EmitReceiptResponse, InvoiceStatus,
-    InvoiceStatusCatalogResponse, PersistedInvoiceData, ReceiptItem, ReceiptOrder, ReceiptPayment,
+    BillingErrorResponse, BusinessInfo, ComprobanteResumen, ComprobantesListResponse,
+    EmitReceiptResponse, InvoiceStatus, InvoiceStatusCatalogResponse, PersistedInvoiceData,
+    ReceiptItem, ReceiptOrder, ReceiptPayment,
 };
 use crate::services::receipt_service::{
     format_receipt_number, generate_pdf, validate_receipt, ReceiptValidationError, SUCCESS_MESSAGE,
@@ -284,6 +286,119 @@ async fn load_invoice_data(
 )]
 pub async fn listar_estados_factura() -> Json<InvoiceStatusCatalogResponse> {
     Json(InvoiceStatusCatalogResponse::exact_catalog())
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListarComprobantesQuery {
+    /// Filtra por nombre, apellido, cédula del cliente o número de comprobante.
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/billing/comprobantes",
+    tag = "Emisión de comprobantes",
+    params(
+        ("q" = Option<String>, Query, description = "Filtra por nombre, apellido, cédula del cliente o número de comprobante"),
+        ("limit" = Option<i64>, Query, description = "Máximo de resultados (por defecto 20, máx 100)"),
+        ("offset" = Option<i64>, Query, description = "Desplazamiento para paginar")
+    ),
+    responses(
+        (status = 200, description = "Historial de facturas emitidas por el cajero autenticado", body = ComprobantesListResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn listar_mis_comprobantes(
+    Extension(cajero_id): Extension<String>,
+    Extension(business): Extension<BusinessInfo>,
+    Query(params): Query<ListarComprobantesQuery>,
+    State(pool): State<PgPool>,
+) -> Response {
+    let limit = params.limit.unwrap_or(20).clamp(1, 100);
+    let offset = params.offset.unwrap_or(0).max(0);
+    let filtro = params.q.unwrap_or_default().trim().to_string();
+    let filtro_like = format!("%{filtro}%");
+
+    // El historial es por cajero (HU: "las facturaciones que ha hecho ese
+    // usuario"), así que se filtra por el cajero_id real del pedido en el
+    // POS, no por lo persistido en `datos` (que puede faltar en filas
+    // antiguas pendientes de rehidratación).
+    let filter_clause = r#"p.cajero_id = $1
+             AND ($2 = '' OR p.cliente_nombre ILIKE $3 OR to_jsonb(p)->>'cliente_apellido' ILIKE $3
+                  OR p.cliente_cedula ILIKE $3 OR c.numero::text ILIKE $3)"#;
+
+    let listado_sql = format!(
+        r#"SELECT c.numero, c.pedido_id, c.estado::text, c.datos
+           FROM billing_service.comprobantes c
+           JOIN pos_service."Pedido" p ON p.id = c.pedido_id
+           WHERE {filter_clause}
+           ORDER BY c.numero DESC
+           LIMIT $4 OFFSET $5"#
+    );
+    let rows = sqlx::query_as::<_, (i64, String, String, Option<SqlJson<PersistedInvoiceData>>)>(
+        &listado_sql,
+    )
+    .bind(&cajero_id)
+    .bind(&filtro)
+    .bind(&filtro_like)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&pool)
+    .await;
+
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(error) => return internal_error("listado de comprobantes", error),
+    };
+
+    let total_sql = format!(
+        r#"SELECT COUNT(*)
+           FROM billing_service.comprobantes c
+           JOIN pos_service."Pedido" p ON p.id = c.pedido_id
+           WHERE {filter_clause}"#
+    );
+    let total = sqlx::query_scalar::<_, i64>(&total_sql)
+        .bind(&cajero_id)
+        .bind(&filtro)
+        .bind(&filtro_like)
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+
+    let comprobantes: Vec<ComprobanteResumen> = rows
+        .into_iter()
+        .map(|(numero, pedido_id, estado_texto, datos)| {
+            let estado_factura = estado_texto.parse::<InvoiceStatus>().unwrap_or(InvoiceStatus::Pagada);
+            let (cliente_nombre, cliente_apellido, cliente_cedula, fecha_pago, total) = match datos {
+                Some(SqlJson(datos)) => (
+                    datos.pedido.cliente_nombre,
+                    datos.pedido.cliente_apellido,
+                    datos.pedido.cliente_cedula,
+                    datos.pedido.fecha_pago,
+                    Some(datos.pedido.total),
+                ),
+                None => (None, None, None, None, None),
+            };
+            ComprobanteResumen {
+                numero_comprobante: format_receipt_number(&business, numero),
+                pdf_url: format!("/api/billing/comprobantes/{pedido_id}/pdf"),
+                pedido_id,
+                estado_factura,
+                cliente_nombre,
+                cliente_apellido,
+                cliente_cedula,
+                fecha_pago,
+                total,
+            }
+        })
+        .collect();
+
+    Json(ComprobantesListResponse { comprobantes, total }).into_response()
 }
 
 #[utoipa::path(

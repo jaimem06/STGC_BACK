@@ -18,6 +18,7 @@ use axum::middleware;
     paths(
         facturas_handler::registrar_movimiento_factura,
         comprobantes_handler::listar_estados_factura,
+        comprobantes_handler::listar_mis_comprobantes,
         comprobantes_handler::emitir_comprobante,
         comprobantes_handler::descargar_comprobante_pdf
     ),
@@ -28,6 +29,8 @@ use axum::middleware;
             crate::models::billing::InvoiceStatusDefinition,
             crate::models::billing::InvoiceStatusCatalogResponse,
             crate::models::billing::EmitReceiptResponse,
+            crate::models::billing::ComprobanteResumen,
+            crate::models::billing::ComprobantesListResponse,
             crate::models::billing::BillingErrorResponse
         )
     ),
@@ -48,6 +51,7 @@ pub fn create_router(pool: PgPool, business_info: BusinessInfo) -> Router {
     let api_routes = Router::new()
         .route("/facturas/movimiento", post(facturas_handler::registrar_movimiento_factura))
         .route("/facturas/estados", get(comprobantes_handler::listar_estados_factura))
+        .route("/comprobantes", get(comprobantes_handler::listar_mis_comprobantes))
         .route("/comprobantes/:pedido_id/emitir", post(comprobantes_handler::emitir_comprobante))
         .route("/comprobantes/:pedido_id/pdf", get(comprobantes_handler::descargar_comprobante_pdf))
         .route_layer(middleware::from_fn(auth_middleware))

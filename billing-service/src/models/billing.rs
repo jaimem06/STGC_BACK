@@ -230,3 +230,23 @@ pub struct EmitReceiptResponse {
 pub struct BillingErrorResponse {
     pub message: String,
 }
+
+/// Resumen de un comprobante para el historial de facturación del cajero.
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ComprobanteResumen {
+    pub numero_comprobante: String,
+    pub pedido_id: String,
+    pub estado_factura: InvoiceStatus,
+    pub cliente_nombre: Option<String>,
+    pub cliente_apellido: Option<String>,
+    pub cliente_cedula: Option<String>,
+    pub fecha_pago: Option<DateTime<Utc>>,
+    pub total: Option<f64>,
+    pub pdf_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct ComprobantesListResponse {
+    pub comprobantes: Vec<ComprobanteResumen>,
+    pub total: i64,
+}
