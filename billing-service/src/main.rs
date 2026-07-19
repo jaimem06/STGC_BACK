@@ -98,6 +98,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             nombre: String::new(),
             ruc: String::new(),
             direccion: String::new(),
+            establecimiento: "001".into(),
+            punto_emision: "001".into(),
         }
     });
 

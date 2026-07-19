@@ -1,5 +1,9 @@
 use crate::models::billing::{BusinessInfo, ReceiptOrder};
-use printpdf::{BuiltinFont, IndirectFontRef, Line, Mm, PdfDocument, PdfLayerReference, Point};
+use printpdf::path::PaintMode;
+use printpdf::{
+    BuiltinFont, Color, IndirectFontRef, Line, Mm, PdfDocument, PdfLayerReference, Point, Rect,
+    Rgb,
+};
 use std::fmt;
 use std::io::{BufWriter, Cursor};
 
@@ -22,8 +26,13 @@ impl fmt::Display for ReceiptValidationError {
     }
 }
 
-pub fn format_receipt_number(number: i64) -> String {
-    format!("COMP-{number:08}")
+/// Número de comprobante en formato SRI: establecimiento (3 dígitos) -
+/// punto de emisión (3 dígitos) - secuencial (9 dígitos). Ej.: 001-001-000000042.
+pub fn format_receipt_number(business: &BusinessInfo, number: i64) -> String {
+    format!(
+        "{}-{}-{number:09}",
+        business.establecimiento, business.punto_emision
+    )
 }
 
 pub fn validate_receipt(
@@ -167,7 +176,34 @@ fn wrapped_lines(prefix: &str, value: &str, max_chars: usize) -> Vec<String> {
     lines
 }
 
-fn draw_line(layer: &PdfLayerReference, x1: f32, y1: f32, x2: f32, y2: f32) {
+// Paleta institucional STGC (los mismos tonos del frontend, src/app/globals.css):
+// café primario, verde secundario, terracota terciario y cremas de superficie.
+type PaletteColor = (f32, f32, f32);
+const CAFE_OSCURO: PaletteColor = (0.267, 0.165, 0.133); // #442a22
+const VERDE: PaletteColor = (0.227, 0.408, 0.263); // #3a6843
+const TERRACOTA: PaletteColor = (0.694, 0.439, 0.212); // #b17036
+const CREMA: PaletteColor = (0.965, 0.925, 0.882); // #f6ece1
+const CREMA_CLARO: PaletteColor = (0.988, 0.949, 0.906); // #fcf2e7
+const TINTA: PaletteColor = (0.122, 0.106, 0.078); // #1f1b14
+const LINEA: PaletteColor = (0.831, 0.765, 0.745); // #d4c3be
+const BLANCO: PaletteColor = (1.0, 1.0, 1.0);
+
+fn color(c: PaletteColor) -> Color {
+    Color::Rgb(Rgb::new(c.0, c.1, c.2, None))
+}
+
+fn fill_rect(layer: &PdfLayerReference, left: f32, bottom: f32, right: f32, top: f32, c: PaletteColor) {
+    layer.set_fill_color(color(c));
+    layer.add_rect(Rect::new(Mm(left), Mm(bottom), Mm(right), Mm(top)).with_mode(PaintMode::Fill));
+}
+
+fn stroke_rect(layer: &PdfLayerReference, left: f32, bottom: f32, right: f32, top: f32, c: PaletteColor) {
+    layer.set_outline_color(color(c));
+    layer.add_rect(Rect::new(Mm(left), Mm(bottom), Mm(right), Mm(top)).with_mode(PaintMode::Stroke));
+}
+
+fn stroke_line(layer: &PdfLayerReference, x1: f32, y1: f32, x2: f32, y2: f32, c: PaletteColor) {
+    layer.set_outline_color(color(c));
     layer.add_line(Line {
         points: vec![
             (Point::new(Mm(x1), Mm(y1)), false),
@@ -177,18 +213,8 @@ fn draw_line(layer: &PdfLayerReference, x1: f32, y1: f32, x2: f32, y2: f32) {
     });
 }
 
-fn draw_rect(layer: &PdfLayerReference, left: f32, bottom: f32, right: f32, top: f32) {
-    layer.add_line(Line {
-        points: vec![
-            (Point::new(Mm(left), Mm(bottom)), false),
-            (Point::new(Mm(left), Mm(top)), false),
-            (Point::new(Mm(right), Mm(top)), false),
-            (Point::new(Mm(right), Mm(bottom)), false),
-        ],
-        is_closed: true,
-    });
-}
-
+// En PDF el color del texto es el "fill color": se fija SIEMPRE justo antes
+// de escribir para que un relleno previo no tiña el texto.
 fn write_text(
     layer: &PdfLayerReference,
     text: impl AsRef<str>,
@@ -196,7 +222,9 @@ fn write_text(
     x: f32,
     y: f32,
     font: &IndirectFontRef,
+    c: PaletteColor,
 ) {
+    layer.set_fill_color(color(c));
     layer.use_text(text.as_ref(), size, Mm(x), Mm(y), font);
 }
 
@@ -211,41 +239,47 @@ fn render_header(
     let paid_at = order.fecha_pago.expect("validated payment date");
     layer.set_outline_thickness(0.6);
 
-    // Distribución inspirada en el RIDE del SRI, limitada estrictamente a los datos de HU12-A.
-    draw_rect(layer, 12.0, 250.0, 118.0, 285.0);
-    draw_rect(layer, 122.0, 250.0, 198.0, 285.0);
-
-    let mut business_y = 278.0;
-    for line in wrapped_lines("", &business.nombre, 48) {
-        write_text(layer, line, 11.0, 16.0, business_y, bold);
-        business_y -= 5.0;
+    // Banda superior con la identidad del negocio (café institucional a todo
+    // el ancho). Los datos se limitan estrictamente a los de HU12-A.
+    fill_rect(layer, 0.0, 262.0, 210.0, 297.0, CAFE_OSCURO);
+    let mut business_y = 288.0;
+    for line in wrapped_lines("", &business.nombre, 34) {
+        write_text(layer, line, 15.0, 14.0, business_y, bold, BLANCO);
+        business_y -= 6.5;
     }
-    let mut address_y = 259.0;
-    for line in wrapped_lines("DIRECCIÓN: ", &business.direccion, 62) {
-        write_text(layer, line, 7.5, 16.0, address_y, normal);
+    let mut address_y = 271.0;
+    for line in wrapped_lines("DIRECCIÓN: ", &business.direccion, 58) {
+        write_text(layer, line, 7.5, 14.0, address_y, normal, CREMA);
         address_y -= 4.0;
     }
 
+    // Tarjeta de la factura, con el número en formato SRI destacado.
+    fill_rect(layer, 126.0, 266.0, 198.0, 293.0, CREMA_CLARO);
+    stroke_rect(layer, 126.0, 266.0, 198.0, 293.0, TERRACOTA);
     write_text(
         layer,
         format!("R.U.C.: {}", business.ruc),
-        10.0,
-        126.0,
-        278.0,
+        9.0,
+        130.0,
+        287.0,
         bold,
+        TINTA,
     );
-    write_text(layer, "FACTURA", 15.0, 126.0, 267.0, bold);
+    write_text(layer, "FACTURA", 15.0, 130.0, 278.0, bold, CAFE_OSCURO);
     write_text(
         layer,
-        format!("No. {}", format_receipt_number(receipt_number)),
+        format!("No. {}", format_receipt_number(business, receipt_number)),
         10.0,
-        126.0,
-        257.0,
+        130.0,
+        269.5,
         bold,
+        TERRACOTA,
     );
 
-    draw_rect(layer, 12.0, 220.0, 198.0, 246.0);
-    write_text(layer, "DATOS DEL CLIENTE", 9.0, 15.0, 241.0, bold);
+    // Panel de datos del cliente sobre fondo crema.
+    fill_rect(layer, 12.0, 224.0, 198.0, 250.0, CREMA);
+    stroke_rect(layer, 12.0, 224.0, 198.0, 250.0, LINEA);
+    write_text(layer, "DATOS DEL CLIENTE", 9.0, 15.0, 244.0, bold, VERDE);
     let full_name = format!(
         "{} {}",
         order.cliente_nombre.as_deref().unwrap_or_default(),
@@ -256,8 +290,9 @@ fn render_header(
         format!("NOMBRES Y APELLIDOS: {full_name}"),
         7.5,
         15.0,
-        234.0,
+        236.5,
         normal,
+        TINTA,
     );
     write_text(
         layer,
@@ -267,43 +302,47 @@ fn render_header(
         ),
         7.5,
         132.0,
-        234.0,
+        236.5,
         normal,
+        TINTA,
     );
     write_text(
         layer,
         format!("FECHA DE EMISIÓN: {}", paid_at.format("%Y-%m-%d")),
         7.5,
         15.0,
-        226.0,
+        229.0,
         normal,
+        TINTA,
     );
     write_text(
         layer,
         format!("HORA EXACTA (UTC): {}", paid_at.format("%H:%M:%S%.3f")),
         7.5,
         75.0,
-        226.0,
+        229.0,
         normal,
+        TINTA,
     );
+    // Fuente menor y arranque más a la izquierda: el UUID completo del pedido
+    // debe caber dentro del panel (borde derecho en x=198).
     write_text(
         layer,
         format!("PEDIDO: {}", order.pedido_id),
-        7.5,
-        142.0,
-        226.0,
+        6.5,
+        138.0,
+        229.0,
         normal,
+        TINTA,
     );
 
-    write_text(layer, "DETALLE DE PRODUCTOS", 9.0, 12.0, 214.0, bold);
-    draw_rect(layer, 12.0, 200.0, 198.0, 210.0);
-    for x in [28.0, 125.0, 160.0] {
-        draw_line(layer, x, 200.0, x, 210.0);
-    }
-    write_text(layer, "CANT.", 7.0, 15.0, 204.0, bold);
-    write_text(layer, "DESCRIPCIÓN", 7.0, 31.0, 204.0, bold);
-    write_text(layer, "PRECIO UNITARIO", 6.5, 128.0, 204.0, bold);
-    write_text(layer, "SUBTOTAL", 7.0, 165.0, 204.0, bold);
+    // Cabecera de la tabla de productos: banda café con títulos en blanco.
+    write_text(layer, "DETALLE DE PRODUCTOS", 9.0, 12.0, 215.0, bold, CAFE_OSCURO);
+    fill_rect(layer, 12.0, 202.0, 198.0, 210.0, CAFE_OSCURO);
+    write_text(layer, "CANT.", 7.0, 15.0, 204.5, bold, BLANCO);
+    write_text(layer, "DESCRIPCIÓN", 7.0, 31.0, 204.5, bold, BLANCO);
+    write_text(layer, "PRECIO UNITARIO", 6.5, 128.0, 204.5, bold, BLANCO);
+    write_text(layer, "SUBTOTAL", 7.0, 165.0, 204.5, bold, BLANCO);
 }
 
 fn render_totals_and_payments(
@@ -315,11 +354,14 @@ fn render_totals_and_payments(
 ) {
     let payment_height = 12.0 + order.pagos.len() as f32 * 6.0;
     let bottom = top - payment_height.max(30.0);
-    draw_rect(layer, 12.0, bottom, 120.0, top);
-    draw_line(layer, 12.0, top - 10.0, 120.0, top - 10.0);
-    draw_line(layer, 90.0, bottom, 90.0, top);
-    write_text(layer, "FORMA DE PAGO", 8.0, 15.0, top - 6.5, bold);
-    write_text(layer, "VALOR", 8.0, 94.0, top - 6.5, bold);
+
+    // Bloque de formas de pago con cabecera crema.
+    fill_rect(layer, 12.0, top - 10.0, 120.0, top, CREMA);
+    stroke_rect(layer, 12.0, bottom, 120.0, top, LINEA);
+    stroke_line(layer, 12.0, top - 10.0, 120.0, top - 10.0, LINEA);
+    stroke_line(layer, 90.0, bottom, 90.0, top, LINEA);
+    write_text(layer, "FORMA DE PAGO", 8.0, 15.0, top - 6.5, bold, CAFE_OSCURO);
+    write_text(layer, "VALOR", 8.0, 94.0, top - 6.5, bold, CAFE_OSCURO);
     let mut payment_y = top - 16.0;
     for payment in &order.pagos {
         write_text(
@@ -329,6 +371,7 @@ fn render_totals_and_payments(
             15.0,
             payment_y,
             normal,
+            TINTA,
         );
         write_text(
             layer,
@@ -337,17 +380,20 @@ fn render_totals_and_payments(
             94.0,
             payment_y,
             normal,
+            TINTA,
         );
         payment_y -= 6.0;
     }
 
-    draw_rect(layer, 124.0, top - 30.0, 198.0, top);
-    draw_line(layer, 124.0, top - 10.0, 198.0, top - 10.0);
-    draw_line(layer, 124.0, top - 20.0, 198.0, top - 20.0);
-    draw_line(layer, 175.0, top - 30.0, 175.0, top);
-    write_text(layer, "SUBTOTAL", 8.0, 128.0, top - 6.5, normal);
-    write_text(layer, "IVA", 8.0, 128.0, top - 16.5, normal);
-    write_text(layer, "TOTAL A PAGAR", 8.0, 128.0, top - 26.5, bold);
+    // Bloque de totales; la fila TOTAL A PAGAR se destaca en verde.
+    fill_rect(layer, 124.0, top - 30.0, 198.0, top - 20.0, VERDE);
+    stroke_rect(layer, 124.0, top - 30.0, 198.0, top, LINEA);
+    stroke_line(layer, 124.0, top - 10.0, 198.0, top - 10.0, LINEA);
+    stroke_line(layer, 124.0, top - 20.0, 198.0, top - 20.0, LINEA);
+    stroke_line(layer, 175.0, top - 30.0, 175.0, top, LINEA);
+    write_text(layer, "SUBTOTAL", 8.0, 128.0, top - 6.5, normal, TINTA);
+    write_text(layer, "IVA", 8.0, 128.0, top - 16.5, normal, TINTA);
+    write_text(layer, "TOTAL A PAGAR", 8.0, 128.0, top - 26.5, bold, BLANCO);
     write_text(
         layer,
         format!("${:.2}", order.subtotal),
@@ -355,6 +401,7 @@ fn render_totals_and_payments(
         179.0,
         top - 6.5,
         normal,
+        TINTA,
     );
     write_text(
         layer,
@@ -363,6 +410,7 @@ fn render_totals_and_payments(
         179.0,
         top - 16.5,
         normal,
+        TINTA,
     );
     write_text(
         layer,
@@ -371,6 +419,19 @@ fn render_totals_and_payments(
         179.0,
         top - 26.5,
         bold,
+        BLANCO,
+    );
+
+    // Pie institucional.
+    stroke_line(layer, 12.0, 18.0, 198.0, 18.0, LINEA);
+    write_text(
+        layer,
+        "Gracias por su compra - Documento generado electrónicamente por STGC",
+        8.0,
+        55.0,
+        12.0,
+        normal,
+        TERRACOTA,
     );
 }
 
@@ -381,7 +442,7 @@ pub fn generate_pdf(
 ) -> Result<Vec<u8>, String> {
     validate_receipt(order, business).map_err(|error| error.to_string())?;
     let (document, page, layer) = PdfDocument::new(
-        format!("Factura {}", format_receipt_number(receipt_number)),
+        format!("Factura {}", format_receipt_number(business, receipt_number)),
         Mm(210.0),
         Mm(297.0),
         "Factura",
@@ -401,9 +462,9 @@ pub fn generate_pdf(
         business,
         receipt_number,
     );
-    let mut y = 200.0;
+    let mut y = 202.0;
 
-    for item in &order.items {
+    for (index, item) in order.items.iter().enumerate() {
         let description = wrapped_lines("", &item.nombre, 52);
         let row_height = (description.len() as f32 * 4.2 + 3.5).max(8.0);
         if y - row_height < 80.0 {
@@ -417,12 +478,16 @@ pub fn generate_pdf(
                 business,
                 receipt_number,
             );
-            y = 200.0;
+            y = 202.0;
         }
 
-        draw_rect(&current_layer, 12.0, y - row_height, 198.0, y);
+        // Filas cebra: el fondo crema alterno va antes que bordes y texto.
+        if index % 2 == 0 {
+            fill_rect(&current_layer, 12.0, y - row_height, 198.0, y, CREMA_CLARO);
+        }
+        stroke_rect(&current_layer, 12.0, y - row_height, 198.0, y, LINEA);
         for x in [28.0, 125.0, 160.0] {
-            draw_line(&current_layer, x, y - row_height, x, y);
+            stroke_line(&current_layer, x, y - row_height, x, y, LINEA);
         }
         write_text(
             &current_layer,
@@ -431,10 +496,11 @@ pub fn generate_pdf(
             16.0,
             y - 5.5,
             &normal,
+            TINTA,
         );
         let mut description_y = y - 5.5;
         for line in description {
-            write_text(&current_layer, line, 7.5, 31.0, description_y, &normal);
+            write_text(&current_layer, line, 7.5, 31.0, description_y, &normal, TINTA);
             description_y -= 4.2;
         }
         write_text(
@@ -444,6 +510,7 @@ pub fn generate_pdf(
             130.0,
             y - 5.5,
             &normal,
+            TINTA,
         );
         write_text(
             &current_layer,
@@ -452,6 +519,7 @@ pub fn generate_pdf(
             166.0,
             y - 5.5,
             &normal,
+            TINTA,
         );
         y -= row_height;
     }
@@ -501,6 +569,8 @@ mod tests {
             "Cafetería STGC".into(),
             "1790012345001".into(),
             "Av. Principal 123".into(),
+            "001".into(),
+            "001".into(),
         )
         .unwrap()
     }
@@ -527,7 +597,29 @@ mod tests {
         assert!(error.contains("apellido del cliente"));
         assert!(error.contains("fecha y hora de pago"));
 
-        assert!(BusinessInfo::new("".into(), "1790012345001".into(), "Dirección".into()).is_err());
+        assert!(BusinessInfo::new(
+            "".into(),
+            "1790012345001".into(),
+            "Dirección".into(),
+            "001".into(),
+            "001".into()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ca4_rejects_invalid_sri_series() {
+        // Las series SRI deben ser exactamente 3 dígitos.
+        for (estab, punto) in [("1", "001"), ("001", "ABC"), ("0011", "001"), ("", "")] {
+            assert!(BusinessInfo::new(
+                "Cafetería STGC".into(),
+                "1790012345001".into(),
+                "Av. Principal 123".into(),
+                estab.into(),
+                punto.into()
+            )
+            .is_err());
+        }
     }
 
     #[test]
@@ -564,9 +656,13 @@ mod tests {
 
     #[test]
     fn ca4_formats_sequential_number_without_losing_uniqueness() {
-        assert_eq!(format_receipt_number(1), "COMP-00000001");
-        assert_eq!(format_receipt_number(2), "COMP-00000002");
-        assert_ne!(format_receipt_number(999), format_receipt_number(1000));
+        let business = business();
+        assert_eq!(format_receipt_number(&business, 1), "001-001-000000001");
+        assert_eq!(format_receipt_number(&business, 2), "001-001-000000002");
+        assert_ne!(
+            format_receipt_number(&business, 999),
+            format_receipt_number(&business, 1000)
+        );
     }
 
     #[test]
@@ -603,7 +699,7 @@ mod tests {
             "1.50",
             "11.50",
             "EFECTIVO",
-            "COMP-00000042",
+            "001-001-000000042",
         ] {
             assert!(
                 text.contains(expected),

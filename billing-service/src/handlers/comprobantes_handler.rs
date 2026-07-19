@@ -36,6 +36,7 @@ fn internal_error(context: &str, error: impl std::fmt::Display) -> Response {
 }
 
 fn success_response(
+    business: &BusinessInfo,
     pedido_id: &str,
     number: i64,
     invoice_status: InvoiceStatus,
@@ -50,7 +51,7 @@ fn success_response(
         status,
         Json(EmitReceiptResponse {
             message: SUCCESS_MESSAGE.into(),
-            numero_comprobante: format_receipt_number(number),
+            numero_comprobante: format_receipt_number(business, number),
             estado_factura: invoice_status,
             pdf_url: format!("/api/billing/comprobantes/{pedido_id}/pdf"),
             creado: created,
@@ -351,7 +352,7 @@ pub async fn emitir_comprobante(
         if let Err(error) = tx.commit().await {
             return internal_error("confirmación de factura existente", error);
         }
-        return success_response(&pedido_id, number, invoice_status, false);
+        return success_response(&business, &pedido_id, number, invoice_status, false);
     }
 
     let number = match sqlx::query_scalar::<_, i64>(
@@ -373,7 +374,7 @@ pub async fn emitir_comprobante(
         return internal_error("confirmación de emisión", error);
     }
 
-    success_response(&pedido_id, number, InvoiceStatus::Pagada, true)
+    success_response(&business, &pedido_id, number, InvoiceStatus::Pagada, true)
 }
 
 #[utoipa::path(
@@ -445,7 +446,11 @@ pub async fn descargar_comprobante_pdf(
         Err(error) => return internal_error("generación PDF bajo demanda", error),
     };
 
-    let filename = format!("comprobante-{}.pdf", format_receipt_number(number));
+    // La serie sale del snapshot persistido, coherente con el contenido del PDF.
+    let filename = format!(
+        "comprobante-{}.pdf",
+        format_receipt_number(&invoice_data.negocio, number)
+    );
     let disposition = match HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
         Ok(value) => value,
         Err(error) => return internal_error("nombre de archivo", error),
@@ -476,11 +481,19 @@ mod tests {
 
     #[test]
     fn ca3_success_contract_contains_confirmation_and_pdf_url() {
-        let response = success_response("PED-1", 7, InvoiceStatus::Pagada, true);
+        let business = BusinessInfo::new(
+            "Negocio".into(),
+            "1790012345001".into(),
+            "Dirección".into(),
+            "001".into(),
+            "001".into(),
+        )
+        .unwrap();
+        let response = success_response(&business, "PED-1", 7, InvoiceStatus::Pagada, true);
         assert_eq!(response.status(), StatusCode::CREATED);
         let payload = EmitReceiptResponse {
             message: SUCCESS_MESSAGE.into(),
-            numero_comprobante: format_receipt_number(7),
+            numero_comprobante: format_receipt_number(&business, 7),
             estado_factura: InvoiceStatus::Pagada,
             pdf_url: "/api/billing/comprobantes/PED-1/pdf".into(),
             creado: true,

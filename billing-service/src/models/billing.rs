@@ -115,25 +115,56 @@ pub struct CreateEntradaFacturaDto {
     pub tipo: String,
 }
 
+/// Serie SRI por defecto (primer establecimiento / primer punto de emisión).
+/// También cubre los snapshots JSONB persistidos antes de que existieran
+/// estos campos (serde los rellena al deserializar).
+fn serie_por_defecto() -> String {
+    "001".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub struct BusinessInfo {
     pub nombre: String,
     pub ruc: String,
     pub direccion: String,
+    /// Código de establecimiento SRI (3 dígitos, p. ej. "001").
+    #[serde(default = "serie_por_defecto")]
+    pub establecimiento: String,
+    /// Código de punto de emisión SRI (3 dígitos, p. ej. "001").
+    #[serde(default = "serie_por_defecto")]
+    pub punto_emision: String,
+}
+
+fn es_serie_sri(valor: &str) -> bool {
+    valor.len() == 3 && valor.chars().all(|c| c.is_ascii_digit())
 }
 
 impl BusinessInfo {
-    pub fn new(nombre: String, ruc: String, direccion: String) -> Result<Self, String> {
+    pub fn new(
+        nombre: String,
+        ruc: String,
+        direccion: String,
+        establecimiento: String,
+        punto_emision: String,
+    ) -> Result<Self, String> {
         let business = Self {
             nombre,
             ruc,
             direccion,
+            establecimiento,
+            punto_emision,
         };
         if business.nombre.trim().is_empty()
             || business.ruc.trim().is_empty()
             || business.direccion.trim().is_empty()
         {
             return Err("BUSINESS_NAME, BUSINESS_RUC y BUSINESS_ADDRESS son obligatorios".into());
+        }
+        if !es_serie_sri(&business.establecimiento) || !es_serie_sri(&business.punto_emision) {
+            return Err(
+                "BUSINESS_ESTABLISHMENT y BUSINESS_EMISSION_POINT deben ser exactamente 3 dígitos (p. ej. 001)"
+                    .into(),
+            );
         }
         Ok(business)
     }
@@ -143,6 +174,8 @@ impl BusinessInfo {
             env::var("BUSINESS_NAME").unwrap_or_default(),
             env::var("BUSINESS_RUC").unwrap_or_default(),
             env::var("BUSINESS_ADDRESS").unwrap_or_default(),
+            env::var("BUSINESS_ESTABLISHMENT").unwrap_or_else(|_| serie_por_defecto()),
+            env::var("BUSINESS_EMISSION_POINT").unwrap_or_else(|_| serie_por_defecto()),
         )
     }
 }
