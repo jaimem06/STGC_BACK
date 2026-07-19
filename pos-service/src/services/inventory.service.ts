@@ -2,13 +2,17 @@ import axios from 'axios';
 
 interface InventoryItemPayload {
   id: string;
+  sku: string;
   nombre: string;
   precio: number;
   cantidad: number;
+  stock_minimo: number;
   estado: string;
   tipo: string;
   is_deleted: boolean;
 }
+
+const ESTADOS_EN_CATALOGO = ['DISPONIBLE', 'STOCK_BAJO', 'AGOTADO'];
 
 const getHeaders = (token?: string) => {
   return token ? { Authorization: token } : {};
@@ -21,17 +25,20 @@ export const getInventoryCafeteria = async (token?: string) => {
       headers: getHeaders(token)
     });
 
-    const productosDisponibles = response.data.filter(item => 
-      item.estado === 'DISPONIBLE' && 
-      item.tipo === 'PRODUCTO' && 
+    const productosDelCatalogo = response.data.filter(item =>
+      ESTADOS_EN_CATALOGO.includes(item.estado) &&
+      item.tipo === 'PRODUCTO' &&
       !item.is_deleted
     );
 
-    return productosDisponibles.map(item => ({
+    return productosDelCatalogo.map(item => ({
       id: item.id,
+      sku: item.sku,
       nombre: item.nombre,
       precio: item.precio,
-      stock: item.cantidad
+      stock: item.cantidad,
+      stockMinimo: item.stock_minimo,
+      estado: item.estado
     }));
   } catch (error) {
     console.error('Error fetching inventory from microservice:', error);
