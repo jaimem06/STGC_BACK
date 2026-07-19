@@ -198,7 +198,7 @@ pub async fn get_sales_report(
     let query = format!(
         r#"
         SELECT
-            p.id::uuid AS venta_id,
+            p.id AS venta_id,
             {FECHA_PAGO_UTC} AS fecha,
             {nombre_empleado} AS empleado,
             pi.nombre AS producto,
@@ -220,12 +220,11 @@ pub async fn get_sales_report(
         "#
     );
 
-    let producto_id = filter.producto_id.map(|u| u.to_string());
 
     let result = sqlx::query_as::<_, VentaReport>(&query)
         .bind(filter.fecha_inicio)
         .bind(filter.fecha_fin)
-        .bind(producto_id)
+        .bind(filter.producto_id)
         .bind(filter.empleado_id)
         .fetch_all(pool)
         .await;
@@ -333,7 +332,7 @@ pub async fn get_sales_by_product(
     let query = format!(
         r#"
         SELECT
-            pi."productoId"::uuid AS producto_id,
+            pi."productoId" AS producto_id,
             COALESCE(MAX(ii.nombre), MAX(pi.nombre)) AS producto_nombre,
             COALESCE(SUM(pi.cantidad), 0)::float8 AS total_vendido,
             COALESCE(SUM(pi.subtotal), 0)::float8 AS total_ingresos,
@@ -433,7 +432,7 @@ pub async fn get_sales_by_employee_id(
     let query = format!(
         r#"
         SELECT
-            p.id::uuid AS venta_id,
+            p.id AS venta_id,
             {FECHA_PAGO_UTC} AS fecha,
             pi.nombre AS producto,
             pi.cantidad::float8 AS cantidad,

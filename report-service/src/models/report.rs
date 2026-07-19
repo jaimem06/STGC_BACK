@@ -13,7 +13,7 @@ pub struct ReportFilter {
     pub fecha_fin: Option<DateTime<Utc>>,
 
     #[serde(default)]
-    pub producto_id: Option<Uuid>,
+    pub producto_id: Option<String>,
 
     #[serde(default)]
     pub empleado_id: Option<String>,
@@ -31,7 +31,7 @@ pub struct SalesReportFilter {
     pub fecha_fin: Option<DateTime<Utc>>,
 
     #[serde(default)]
-    pub producto_id: Option<Uuid>,
+    pub producto_id: Option<String>,
 
     #[serde(default)]
     pub empleado_id: Option<String>,
@@ -66,7 +66,7 @@ pub struct MovimientoReport {
 
 #[derive(Debug, Serialize, Deserialize, ToSchema, FromRow)]
 pub struct VentaReport {
-    pub venta_id: Uuid,
+    pub venta_id: String,
     pub fecha: DateTime<Utc>,
     pub empleado: String,
     pub producto: String,
@@ -101,7 +101,7 @@ pub struct VentaPeriodoReport {
 /// Reporte de ventas por producto
 #[derive(Debug, Serialize, Deserialize, ToSchema, FromRow)]
 pub struct VentaProductoReport {
-    pub producto_id: Uuid,
+    pub producto_id: String,
     pub producto_nombre: String,
     pub total_vendido: f64,
     pub total_ingresos: f64,
@@ -121,7 +121,7 @@ pub struct VentaEmpleadoReport {
 /// Reporte de ventas de un empleado específico
 #[derive(Debug, Serialize, Deserialize, ToSchema, FromRow)]
 pub struct VentaEmpleadoDetalleReport {
-    pub venta_id: Uuid,
+    pub venta_id: String,
     pub fecha: DateTime<Utc>,
     pub producto: String,
     pub cantidad: f64,
