@@ -20,7 +20,9 @@ use axum::middleware;
         comprobantes_handler::listar_estados_factura,
         comprobantes_handler::listar_mis_comprobantes,
         comprobantes_handler::emitir_comprobante,
-        comprobantes_handler::descargar_comprobante_pdf
+        comprobantes_handler::descargar_comprobante_pdf,
+        comprobantes_handler::anular_comprobante,
+        comprobantes_handler::reembolsar_comprobante
     ),
     components(
         schemas(
@@ -31,6 +33,7 @@ use axum::middleware;
             crate::models::billing::EmitReceiptResponse,
             crate::models::billing::ComprobanteResumen,
             crate::models::billing::ComprobantesListResponse,
+            crate::models::billing::CambiarEstadoFacturaDto,
             crate::models::billing::BillingErrorResponse
         )
     ),
@@ -54,6 +57,8 @@ pub fn create_router(pool: PgPool, business_info: BusinessInfo) -> Router {
         .route("/comprobantes", get(comprobantes_handler::listar_mis_comprobantes))
         .route("/comprobantes/:pedido_id/emitir", post(comprobantes_handler::emitir_comprobante))
         .route("/comprobantes/:pedido_id/pdf", get(comprobantes_handler::descargar_comprobante_pdf))
+        .route("/comprobantes/:pedido_id/anular", post(comprobantes_handler::anular_comprobante))
+        .route("/comprobantes/:pedido_id/reembolsar", post(comprobantes_handler::reembolsar_comprobante))
         .route_layer(middleware::from_fn(auth_middleware))
         .layer(axum::Extension(business_info))
         .with_state(pool);

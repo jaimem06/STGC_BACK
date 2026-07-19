@@ -43,9 +43,12 @@ CREATE TABLE IF NOT EXISTS billing_service.comprobantes (
     pedido_id              TEXT   NOT NULL,
     numero                 BIGINT NOT NULL DEFAULT nextval('billing_service.comprobante_numero_seq'),
     estado                 billing_service.estado_factura NOT NULL DEFAULT 'PAGADA',
+    motivo_estado          TEXT,
+    actualizado_por        TEXT,
     datos                  JSONB,
     requiere_rehidratacion BOOLEAN NOT NULL DEFAULT FALSE,
     creado                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    actualizado            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT comprobantes_pedido_id_key    UNIQUE (pedido_id),
     CONSTRAINT comprobantes_numero_key       UNIQUE (numero),
     CONSTRAINT comprobantes_numero_positivo  CHECK (numero > 0),
@@ -54,6 +57,18 @@ CREATE TABLE IF NOT EXISTS billing_service.comprobantes (
 
 ALTER SEQUENCE billing_service.comprobante_numero_seq
     OWNED BY billing_service.comprobantes.numero;
+
+-- Columnas añadidas por el ciclo de vida completo de estados (BORRADOR/
+-- PENDIENTE/ANULADA/REEMBOLSADA): `IF NOT EXISTS` para que sumen sin romper
+-- las filas que ya existen en producción (creadas antes de este cambio).
+ALTER TABLE billing_service.comprobantes
+    ADD COLUMN IF NOT EXISTS motivo_estado TEXT;
+ALTER TABLE billing_service.comprobantes
+    ADD COLUMN IF NOT EXISTS actualizado_por TEXT;
+ALTER TABLE billing_service.comprobantes
+    ADD COLUMN IF NOT EXISTS actualizado TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE billing_service.comprobantes
+    ALTER COLUMN estado DROP DEFAULT;
 "#;
 
     sqlx::raw_sql(BOOTSTRAP_SQL).execute(pool).await?;

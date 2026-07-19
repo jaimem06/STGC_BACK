@@ -42,6 +42,23 @@ impl InvoiceStatus {
             Self::Reembolsada => "El pago se realizó, pero el dinero fue devuelto al cliente y la factura quedó sin efecto.",
         }
     }
+
+    /// Reglas del ciclo de vida de una factura. BORRADOR y PENDIENTE pueden
+    /// avanzar hasta PAGADA; solo una factura PAGADA puede reembolsarse (debe
+    /// haber existido un pago real de por medio). ANULADA/REEMBOLSADA son
+    /// terminales: ninguna transición sale de ahí.
+    pub const fn puede_transicionar_a(self, destino: Self) -> bool {
+        matches!(
+            (self, destino),
+            (Self::Borrador, Self::Pendiente)
+                | (Self::Borrador, Self::Pagada)
+                | (Self::Borrador, Self::Anulada)
+                | (Self::Pendiente, Self::Pagada)
+                | (Self::Pendiente, Self::Anulada)
+                | (Self::Pagada, Self::Anulada)
+                | (Self::Pagada, Self::Reembolsada)
+        )
+    }
 }
 
 impl std::str::FromStr for InvoiceStatus {
@@ -243,10 +260,73 @@ pub struct ComprobanteResumen {
     pub fecha_pago: Option<DateTime<Utc>>,
     pub total: Option<f64>,
     pub pdf_url: String,
+    /// Motivo registrado al anular/reembolsar (auditoría). Vacío en los demás estados.
+    pub motivo_estado: Option<String>,
+    pub actualizado: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct ComprobantesListResponse {
     pub comprobantes: Vec<ComprobanteResumen>,
     pub total: i64,
+}
+
+/// Body para anular/reembolsar una factura: el motivo es obligatorio porque el
+/// registro debe quedar auditable ("dejando registro para auditoría").
+#[derive(Debug, Serialize, Deserialize, ToSchema)]
+pub struct CambiarEstadoFacturaDto {
+    pub motivo: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ciclo_de_vida_avanza_solo_por_las_transiciones_definidas_en_los_requerimientos() {
+        use InvoiceStatus::*;
+
+        let permitidas = [
+            (Borrador, Pendiente),
+            (Borrador, Pagada),
+            (Borrador, Anulada),
+            (Pendiente, Pagada),
+            (Pendiente, Anulada),
+            (Pagada, Anulada),
+            (Pagada, Reembolsada),
+        ];
+        for (desde, hacia) in permitidas {
+            assert!(
+                desde.puede_transicionar_a(hacia),
+                "{:?} -> {:?} debería estar permitida",
+                desde,
+                hacia
+            );
+        }
+    }
+
+    #[test]
+    fn reembolso_solo_procede_desde_pagada_nunca_desde_un_borrador_o_pendiente_sin_pago_real() {
+        use InvoiceStatus::*;
+        assert!(!Borrador.puede_transicionar_a(Reembolsada));
+        assert!(!Pendiente.puede_transicionar_a(Reembolsada));
+        assert!(Pagada.puede_transicionar_a(Reembolsada));
+    }
+
+    #[test]
+    fn anulada_y_reembolsada_son_terminales_ninguna_transicion_sale_de_ahi() {
+        use InvoiceStatus::*;
+        for destino in InvoiceStatus::ALL {
+            assert!(!Anulada.puede_transicionar_a(destino));
+            assert!(!Reembolsada.puede_transicionar_a(destino));
+        }
+    }
+
+    #[test]
+    fn no_se_puede_retroceder_de_pagada_a_borrador_o_pendiente() {
+        use InvoiceStatus::*;
+        assert!(!Pagada.puede_transicionar_a(Borrador));
+        assert!(!Pagada.puede_transicionar_a(Pendiente));
+        assert!(!Pendiente.puede_transicionar_a(Borrador));
+    }
 }

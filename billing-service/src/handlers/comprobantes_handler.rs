@@ -11,9 +11,9 @@ use sqlx::{types::Json as SqlJson, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::models::billing::{
-    BillingErrorResponse, BusinessInfo, ComprobanteResumen, ComprobantesListResponse,
-    EmitReceiptResponse, InvoiceStatus, InvoiceStatusCatalogResponse, PersistedInvoiceData,
-    ReceiptItem, ReceiptOrder, ReceiptPayment,
+    BillingErrorResponse, BusinessInfo, CambiarEstadoFacturaDto, ComprobanteResumen,
+    ComprobantesListResponse, EmitReceiptResponse, InvoiceStatus, InvoiceStatusCatalogResponse,
+    PersistedInvoiceData, ReceiptItem, ReceiptOrder, ReceiptPayment,
 };
 use crate::services::receipt_service::{
     format_receipt_number, generate_pdf, validate_receipt, ReceiptValidationError, SUCCESS_MESSAGE,
@@ -143,6 +143,11 @@ fn split_customer_full_name(full_name: Option<String>) -> (Option<String>, Optio
 /// Compatibilidad admitida:
 /// - POS oficial: `cliente_nombre`, `cliente_cedula` y `metodoPago` en `Pedido`.
 /// - POS ampliado: `cliente_apellido` y tabla `Pago` con pagos múltiples.
+///
+/// A propósito NO exige que el pedido esté pagado: se usa también para
+/// construir facturas BORRADOR/PENDIENTE de pedidos aún en edición (HU de
+/// ciclo de vida de estados). Quien necesite exigir un pago confirmado real
+/// (generar el PDF) valida por su cuenta con `validate_receipt`.
 async fn load_invoice_data(
     tx: &mut Transaction<'_, Postgres>,
     pedido_id: &str,
@@ -210,12 +215,6 @@ async fn load_invoice_data(
         pagos: Vec::new(),
     };
 
-    if order.estado != "PAGADO" {
-        return Err(InvoiceDataError::Validation(
-            ReceiptValidationError::UnpaidOrder,
-        ));
-    }
-
     order.items = sqlx::query_as::<_, (String, i32, f64, f64)>(
         r#"SELECT nombre, cantidad, "precioUnitario", subtotal
            FROM pos_service."PedidoItem"
@@ -266,8 +265,6 @@ async fn load_invoice_data(
             });
         }
     }
-
-    validate_receipt(&order, business).map_err(InvoiceDataError::Validation)?;
 
     Ok(PersistedInvoiceData {
         negocio: business.clone(),
@@ -333,16 +330,24 @@ pub async fn listar_mis_comprobantes(
                   OR p.cliente_cedula ILIKE $3 OR c.numero::text ILIKE $3)"#;
 
     let listado_sql = format!(
-        r#"SELECT c.numero, c.pedido_id, c.estado::text, c.datos
+        r#"SELECT c.numero, c.pedido_id, c.estado::text, c.datos, c.motivo_estado, c.actualizado
            FROM billing_service.comprobantes c
            JOIN pos_service."Pedido" p ON p.id = c.pedido_id
            WHERE {filter_clause}
            ORDER BY c.numero DESC
            LIMIT $4 OFFSET $5"#
     );
-    let rows = sqlx::query_as::<_, (i64, String, String, Option<SqlJson<PersistedInvoiceData>>)>(
-        &listado_sql,
-    )
+    let rows = sqlx::query_as::<
+        _,
+        (
+            i64,
+            String,
+            String,
+            Option<SqlJson<PersistedInvoiceData>>,
+            Option<String>,
+            Option<DateTime<Utc>>,
+        ),
+    >(&listado_sql)
     .bind(&cajero_id)
     .bind(&filtro)
     .bind(&filtro_like)
@@ -372,7 +377,7 @@ pub async fn listar_mis_comprobantes(
 
     let comprobantes: Vec<ComprobanteResumen> = rows
         .into_iter()
-        .map(|(numero, pedido_id, estado_texto, datos)| {
+        .map(|(numero, pedido_id, estado_texto, datos, motivo_estado, actualizado)| {
             let estado_factura = estado_texto.parse::<InvoiceStatus>().unwrap_or(InvoiceStatus::Pagada);
             let (cliente_nombre, cliente_apellido, cliente_cedula, fecha_pago, total) = match datos {
                 Some(SqlJson(datos)) => (
@@ -394,6 +399,8 @@ pub async fn listar_mis_comprobantes(
                 cliente_cedula,
                 fecha_pago,
                 total,
+                motivo_estado,
+                actualizado,
             }
         })
         .collect();
@@ -401,22 +408,49 @@ pub async fn listar_mis_comprobantes(
     Json(ComprobantesListResponse { comprobantes, total }).into_response()
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EmitirComprobanteQuery {
+    /// Si es `true`, emite formalmente la factura aunque el pedido no esté
+    /// pagado (queda PENDIENTE: "emitida pero el pago aún no se ha
+    /// registrado"). Si es `false` (por defecto), un pedido sin pagar produce
+    /// un BORRADOR (preventa/pedido en mesa, "aún no se ha emitido
+    /// formalmente"). Un pedido ya PAGADO siempre resulta en PAGADA sin
+    /// importar este parámetro.
+    #[serde(default)]
+    pub formal: bool,
+}
+
+/// Determina a qué estado debe quedar la factura según el estado ACTUAL del
+/// pedido en el POS (fuente de verdad), independientemente de si ya existía
+/// un comprobante previo.
+fn estado_objetivo_desde_pedido(estado_pedido: &str, formal: bool) -> InvoiceStatus {
+    match estado_pedido {
+        "PAGADO" => InvoiceStatus::Pagada,
+        "ANULADO" => InvoiceStatus::Anulada,
+        _ if formal => InvoiceStatus::Pendiente,
+        _ => InvoiceStatus::Borrador,
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/api/billing/comprobantes/{pedido_id}/emitir",
     tag = "Emisión de comprobantes",
-    params(("pedido_id" = String, Path, description = "Identificador del pedido pagado")),
+    params(
+        ("pedido_id" = String, Path, description = "Identificador del pedido"),
+        ("formal" = Option<bool>, Query, description = "true = emitir formalmente aunque no esté pagado (PENDIENTE); false = borrador (BORRADOR)")
+    ),
     responses(
-        (status = 201, description = "Datos de factura generados y persistidos; PDF disponible bajo demanda", body = EmitReceiptResponse),
-        (status = 200, description = "Factura ya existente; se devuelve la misma numeración", body = EmitReceiptResponse),
+        (status = 201, description = "Datos de factura generados y persistidos; PDF disponible bajo demanda si queda PAGADA", body = EmitReceiptResponse),
+        (status = 200, description = "Factura ya existente (o transicionada de estado); se devuelve la numeración vigente", body = EmitReceiptResponse),
         (status = 404, description = "Pedido no encontrado", body = BillingErrorResponse),
-        (status = 409, description = "Pedido sin pago confirmado", body = BillingErrorResponse),
-        (status = 422, description = "Faltan datos obligatorios para la factura", body = BillingErrorResponse)
+        (status = 409, description = "El pedido fue anulado y no tenía factura previa", body = BillingErrorResponse)
     ),
     security(("bearer_auth" = []))
 )]
 pub async fn emitir_comprobante(
     Path(pedido_id): Path<String>,
+    Query(params): Query<EmitirComprobanteQuery>,
     State(pool): State<PgPool>,
     Extension(business): Extension<BusinessInfo>,
 ) -> Response {
@@ -444,39 +478,77 @@ pub async fn emitir_comprobante(
         Err(error) => return internal_error("consulta de factura existente", error),
     };
 
+    // Un pedido anulado sin factura previa no tiene nada que facturar; si ya
+    // existía una factura, sí se le permite avanzar a ANULADA más abajo (para
+    // mantenerla en sincronía con el pedido) en vez de rechazar de plano.
+    if invoice_data.pedido.estado == "ANULADO" && existing.is_none() {
+        if let Err(error) = tx.rollback().await {
+            tracing::warn!(%error, "No se pudo revertir transacción tras pedido anulado");
+        }
+        return error_response(
+            StatusCode::CONFLICT,
+            "El pedido fue anulado; no hay factura que emitir.",
+        );
+    }
+
+    let estado_objetivo = estado_objetivo_desde_pedido(&invoice_data.pedido.estado, params.formal);
+
     if let Some((number, status_name, stored_data)) = existing {
-        let invoice_status = if stored_data.is_none() {
+        let estado_actual = match status_name.parse::<InvoiceStatus>() {
+            Ok(status) => status,
+            Err(error) => return internal_error("lectura del estado de factura", error),
+        };
+
+        // Solo se transiciona si el nuevo estado es distinto y la transición
+        // es válida (BORRADOR→PENDIENTE→PAGADA→{ANULADA,REEMBOLSADA}); un
+        // estado terminal (ANULADA/REEMBOLSADA) nunca se sobrescribe aquí.
+        let estado_final = if estado_actual == estado_objetivo {
+            estado_actual
+        } else if estado_actual.puede_transicionar_a(estado_objetivo) {
+            estado_objetivo
+        } else {
+            estado_actual
+        };
+
+        // BORRADOR/PENDIENTE representan una factura que "se está generando":
+        // el pedido detrás todavía puede editarse (más productos, cambio de
+        // cliente), así que su snapshot se refresca en cada llamada. Una vez
+        // PAGADA (o más allá) el snapshot se congela como registro histórico.
+        let debe_refrescar_datos = stored_data.is_none()
+            || estado_final != estado_actual
+            || matches!(estado_final, InvoiceStatus::Borrador | InvoiceStatus::Pendiente);
+
+        if debe_refrescar_datos {
             if let Err(error) = sqlx::query(
-                "UPDATE billing_service.comprobantes SET datos = $1, requiere_rehidratacion = FALSE, estado = 'PAGADA'::billing_service.estado_factura WHERE pedido_id = $2",
+                "UPDATE billing_service.comprobantes
+                 SET datos = $1, requiere_rehidratacion = FALSE,
+                     estado = $2::billing_service.estado_factura, actualizado = NOW()
+                 WHERE pedido_id = $3",
             )
             .bind(SqlJson(&invoice_data))
+            .bind(estado_final.as_str())
             .bind(&pedido_id)
             .execute(&mut *tx)
             .await
             {
-                return internal_error("migración de datos históricos", error);
+                return internal_error("actualización de datos de factura", error);
             }
-            InvoiceStatus::Pagada
-        } else {
-            match status_name.parse::<InvoiceStatus>() {
-                Ok(status) => status,
-                Err(error) => return internal_error("lectura del estado de factura", error),
-            }
-        };
+        }
 
         if let Err(error) = tx.commit().await {
             return internal_error("confirmación de factura existente", error);
         }
-        return success_response(&business, &pedido_id, number, invoice_status, false);
+        return success_response(&business, &pedido_id, number, estado_final, false);
     }
 
     let number = match sqlx::query_scalar::<_, i64>(
         r#"INSERT INTO billing_service.comprobantes (id, pedido_id, estado, datos)
-           VALUES ($1, $2, 'PAGADA'::billing_service.estado_factura, $3)
+           VALUES ($1, $2, $3::billing_service.estado_factura, $4)
            RETURNING numero"#,
     )
     .bind(Uuid::new_v4())
     .bind(&pedido_id)
+    .bind(estado_objetivo.as_str())
     .bind(SqlJson(&invoice_data))
     .fetch_one(&mut *tx)
     .await
@@ -489,7 +561,132 @@ pub async fn emitir_comprobante(
         return internal_error("confirmación de emisión", error);
     }
 
-    success_response(&business, &pedido_id, number, InvoiceStatus::Pagada, true)
+    success_response(&business, &pedido_id, number, estado_objetivo, true)
+}
+
+/// Transiciona una factura existente a un estado terminal/administrativo
+/// (ANULADA o REEMBOLSADA), dejando `motivo` y `actualizado_por` para
+/// auditoría. Reutilizado por `anular_comprobante` y `reembolsar_comprobante`.
+async fn cambiar_estado_factura(
+    pool: &PgPool,
+    user_id: &str,
+    pedido_id: &str,
+    destino: InvoiceStatus,
+    motivo: &str,
+) -> Result<(i64, InvoiceStatus), Response> {
+    let motivo = motivo.trim();
+    if motivo.is_empty() {
+        return Err(error_response(
+            StatusCode::BAD_REQUEST,
+            "Debes indicar el motivo para dejar registro de auditoría.",
+        ));
+    }
+
+    let existing = sqlx::query_as::<_, (i64, String)>(
+        "SELECT numero, estado::text FROM billing_service.comprobantes WHERE pedido_id = $1",
+    )
+    .bind(pedido_id)
+    .fetch_optional(pool)
+    .await;
+
+    let (numero, estado_actual_texto) = match existing {
+        Ok(Some(row)) => row,
+        Ok(None) => {
+            return Err(error_response(
+                StatusCode::NOT_FOUND,
+                "Comprobante no encontrado.",
+            ))
+        }
+        Err(error) => return Err(internal_error("lectura de estado de factura", error)),
+    };
+
+    let estado_actual = match estado_actual_texto.parse::<InvoiceStatus>() {
+        Ok(estado) => estado,
+        Err(error) => return Err(internal_error("lectura del estado de factura", error)),
+    };
+
+    if !estado_actual.puede_transicionar_a(destino) {
+        return Err(error_response(
+            StatusCode::CONFLICT,
+            format!(
+                "No se puede pasar de {} a {}.",
+                estado_actual.as_str(),
+                destino.as_str()
+            ),
+        ));
+    }
+
+    if let Err(error) = sqlx::query(
+        "UPDATE billing_service.comprobantes
+         SET estado = $1::billing_service.estado_factura, motivo_estado = $2,
+             actualizado_por = $3, actualizado = NOW()
+         WHERE pedido_id = $4",
+    )
+    .bind(destino.as_str())
+    .bind(motivo)
+    .bind(user_id)
+    .bind(pedido_id)
+    .execute(pool)
+    .await
+    {
+        return Err(internal_error("actualización de estado de factura", error));
+    }
+
+    Ok((numero, destino))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/billing/comprobantes/{pedido_id}/anular",
+    tag = "Emisión de comprobantes",
+    params(("pedido_id" = String, Path, description = "Identificador del pedido")),
+    request_body(content = CambiarEstadoFacturaDto, description = "Motivo de la anulación (obligatorio, para auditoría)", content_type = "application/json"),
+    responses(
+        (status = 200, description = "Factura anulada", body = EmitReceiptResponse),
+        (status = 400, description = "Falta el motivo", body = BillingErrorResponse),
+        (status = 404, description = "Comprobante no encontrado", body = BillingErrorResponse),
+        (status = 409, description = "El estado actual no permite anular", body = BillingErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn anular_comprobante(
+    Path(pedido_id): Path<String>,
+    Extension(user_id): Extension<String>,
+    Extension(business): Extension<BusinessInfo>,
+    State(pool): State<PgPool>,
+    Json(payload): Json<CambiarEstadoFacturaDto>,
+) -> Response {
+    match cambiar_estado_factura(&pool, &user_id, &pedido_id, InvoiceStatus::Anulada, &payload.motivo).await {
+        Ok((numero, estado)) => success_response(&business, &pedido_id, numero, estado, false),
+        Err(response) => response,
+    }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/billing/comprobantes/{pedido_id}/reembolsar",
+    tag = "Emisión de comprobantes",
+    params(("pedido_id" = String, Path, description = "Identificador del pedido")),
+    request_body(content = CambiarEstadoFacturaDto, description = "Motivo del reembolso (obligatorio, para auditoría)", content_type = "application/json"),
+    responses(
+        (status = 200, description = "Factura marcada como reembolsada", body = EmitReceiptResponse),
+        (status = 400, description = "Falta el motivo", body = BillingErrorResponse),
+        (status = 404, description = "Comprobante no encontrado", body = BillingErrorResponse),
+        (status = 409, description = "Solo una factura PAGADA puede reembolsarse", body = BillingErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub async fn reembolsar_comprobante(
+    Path(pedido_id): Path<String>,
+    Extension(user_id): Extension<String>,
+    Extension(business): Extension<BusinessInfo>,
+    State(pool): State<PgPool>,
+    Json(payload): Json<CambiarEstadoFacturaDto>,
+) -> Response {
+    match cambiar_estado_factura(&pool, &user_id, &pedido_id, InvoiceStatus::Reembolsada, &payload.motivo).await {
+        Ok((numero, estado)) => success_response(&business, &pedido_id, numero, estado, false),
+        Err(response) => response,
+    }
 }
 
 #[utoipa::path(
@@ -551,8 +748,11 @@ pub async fn descargar_comprobante_pdf(
         return internal_error("confirmación previa a descarga", error);
     }
 
+    // Una factura BORRADOR/PENDIENTE nunca pasa esta validación (no hay pago
+    // real todavía): es un rechazo esperado, no un error interno, así que se
+    // responde con el mismo 409/422 que usa el resto del handler.
     if let Err(error) = validate_receipt(&invoice_data.pedido, &invoice_data.negocio) {
-        return internal_error("validación de datos persistidos", error);
+        return invoice_data_error_response(InvoiceDataError::Validation(error));
     }
 
     // El PDF vive únicamente en memoria durante esta solicitud.
@@ -593,6 +793,19 @@ pub async fn descargar_comprobante_pdf(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn estado_objetivo_refleja_el_estado_real_del_pedido() {
+        // Pagado siempre gana, sin importar `formal`.
+        assert_eq!(estado_objetivo_desde_pedido("PAGADO", false), InvoiceStatus::Pagada);
+        assert_eq!(estado_objetivo_desde_pedido("PAGADO", true), InvoiceStatus::Pagada);
+        // Anulado en el POS -> anulado en la factura.
+        assert_eq!(estado_objetivo_desde_pedido("ANULADO", false), InvoiceStatus::Anulada);
+        // Sin pagar: borrador por defecto, pendiente si se pide formalmente.
+        assert_eq!(estado_objetivo_desde_pedido("EN_EDICION", false), InvoiceStatus::Borrador);
+        assert_eq!(estado_objetivo_desde_pedido("EN_EDICION", true), InvoiceStatus::Pendiente);
+        assert_eq!(estado_objetivo_desde_pedido("PENDIENTE_PAGO", true), InvoiceStatus::Pendiente);
+    }
 
     #[test]
     fn ca3_success_contract_contains_confirmation_and_pdf_url() {
