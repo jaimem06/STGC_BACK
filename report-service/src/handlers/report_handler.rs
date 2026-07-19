@@ -55,11 +55,11 @@ pub async fn get_stock_report(
 ) -> Result<Json<Vec<StockReport>>, (StatusCode, String)> {
     match report_service::get_stock_report(&pool, filter).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de stock generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de stock generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_stock_report: {}", e);
+            error!("Error en get_stock_report: {}", e);
             let error_msg = format!("Error al obtener reporte de stock: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -99,11 +99,11 @@ pub async fn get_movements_report(
 ) -> Result<Json<Vec<MovimientoReport>>, (StatusCode, String)> {
     match report_service::get_movements_report(&pool, filter).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de movimientos generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de movimientos generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_movements_report: {}", e);
+            error!("Error en get_movements_report: {}", e);
             let error_msg = format!("Error al obtener reporte de movimientos: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -143,11 +143,11 @@ pub async fn get_sales_report(
 ) -> Result<Json<Vec<VentaReport>>, (StatusCode, String)> {
     match report_service::get_sales_report(&pool, filter).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de ventas generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de ventas generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_sales_report: {}", e);
+            error!("Error en get_sales_report: {}", e);
             let error_msg = format!("Error al obtener reporte de ventas: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -183,11 +183,11 @@ pub async fn get_dashboard(
 ) -> Result<Json<DashboardReport>, (StatusCode, String)> {
     match report_service::get_dashboard(&pool).await {
         Ok(report) => {
-            tracing::info!("✅ Dashboard generado exitosamente");
+            tracing::info!("Dashboard generado exitosamente");
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_dashboard: {}", e);
+            error!("Error en get_dashboard: {}", e);
             let error_msg = format!("Error al obtener dashboard: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -234,11 +234,11 @@ pub async fn get_sales_by_day(
     
     match report_service::get_sales_by_period(&pool, filter_with_period).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de ventas por día generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de ventas por día generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_sales_by_day: {}", e);
+            error!("Error en get_sales_by_day: {}", e);
             let error_msg = format!("Error al obtener reporte de ventas por día: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -281,11 +281,11 @@ pub async fn get_sales_by_week(
     
     match report_service::get_sales_by_period(&pool, filter_with_period).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de ventas por semana generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de ventas por semana generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_sales_by_week: {}", e);
+            error!("Error en get_sales_by_week: {}", e);
             let error_msg = format!("Error al obtener reporte de ventas por semana: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -328,11 +328,11 @@ pub async fn get_sales_by_month(
     
     match report_service::get_sales_by_period(&pool, filter_with_period).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de ventas por mes generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de ventas por mes generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_sales_by_month: {}", e);
+            error!("Error en get_sales_by_month: {}", e);
             let error_msg = format!("Error al obtener reporte de ventas por mes: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -372,11 +372,11 @@ pub async fn get_sales_by_product(
 ) -> Result<Json<Vec<VentaProductoReport>>, (StatusCode, String)> {
     match report_service::get_sales_by_product(&pool, filter).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de ventas por producto generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de ventas por producto generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_sales_by_product: {}", e);
+            error!("Error en get_sales_by_product: {}", e);
             let error_msg = format!("Error al obtener reporte de ventas por producto: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -416,11 +416,11 @@ pub async fn get_sales_by_employee(
 ) -> Result<Json<Vec<VentaEmpleadoReport>>, (StatusCode, String)> {
     match report_service::get_sales_by_employee(&pool, filter).await {
         Ok(report) => {
-            tracing::info!("✅ Reporte de ventas por empleado generado exitosamente: {} registros", report.len());
+            tracing::info!("Reporte de ventas por empleado generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_sales_by_employee: {}", e);
+            error!("Error en get_sales_by_employee: {}", e);
             let error_msg = format!("Error al obtener reporte de ventas por empleado: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -466,14 +466,13 @@ pub async fn get_sales_by_employee_id(
 ) -> Result<Json<Vec<VentaEmpleadoDetalleReport>>, (StatusCode, String)> {
     match report_service::get_sales_by_employee_id(&pool, empleado_id.clone(), filter).await {
         Ok(report) => {
-            if report.is_empty() {
-                return Err((StatusCode::NOT_FOUND, format!("No se encontraron ventas para el empleado con ID: {}", empleado_id)));
-            }
-            tracing::info!("✅ Reporte de ventas del empleado generado exitosamente: {} registros", report.len());
+            // Un empleado sin ventas en el rango es un resultado válido: lista
+            // vacía con 200 (el 404 anterior rompía el drill-down del frontend).
+            tracing::info!("Reporte de ventas del empleado generado exitosamente: {} registros", report.len());
             Ok(Json(report))
         },
         Err(e) => {
-            error!("❌ Error en get_sales_by_employee_id: {}", e);
+            error!("Error en get_sales_by_employee_id: {}", e);
             let error_msg = format!("Error al obtener reporte de ventas del empleado: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -509,11 +508,11 @@ pub async fn get_available_weeks(
 ) -> Result<Json<Vec<serde_json::Value>>, (StatusCode, String)> {
     match report_service::get_available_weeks(&pool).await {
         Ok(weeks) => {
-            tracing::info!("✅ Semanas disponibles: {} registros", weeks.len());
+            tracing::info!("Semanas disponibles: {} registros", weeks.len());
             Ok(Json(weeks))
         },
         Err(e) => {
-            error!("❌ Error en get_available_weeks: {}", e);
+            error!("Error en get_available_weeks: {}", e);
             let error_msg = format!("Error al obtener semanas disponibles: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, error_msg))
         }
@@ -543,10 +542,10 @@ pub async fn test_db_connection(
     match sqlx::query("SELECT 1 as test").fetch_one(&pool).await {
         Ok(row) => {
             let value: i32 = row.get("test");
-            Ok(format!("✅ Conexión a DB exitosa! Test: {}", value))
+            Ok(format!("Conexión a DB exitosa! Test: {}", value))
         },
         Err(e) => {
-            error!("❌ Error en test_db_connection: {}", e);
+            error!("Error en test_db_connection: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, format!("Error: {}", e)))
         }
     }

@@ -30,12 +30,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
 
-    // Ejecutar migraciones
-    tracing::info!("Ejecutando migraciones...");
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await?;
-    tracing::info!("Migraciones ejecutadas correctamente.");
+    // Este servicio es de SOLO LECTURA: consulta las tablas de pos-service,
+    // inventory-service y auth-service en la BD compartida y no ejecuta
+    // migraciones ni crea tablas propias.
 
     // Crear router
     let app = routes::create_router(pool);

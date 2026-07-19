@@ -46,7 +46,7 @@ pub async fn export_pdf_from_data(
     match export_service::export_pdf_from_data(&payload.data, &payload.headers, &payload.title) {
         Ok(html_content) => Ok(Html(html_content)),
         Err(e) => {
-            error!("❌ Error exportando PDF desde datos: {}", e);
+            error!("Error exportando PDF desde datos: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e))
         }
     }
@@ -88,7 +88,7 @@ pub async fn export_csv_from_data(
             Ok(create_csv_response(csv_data, &filename))
         },
         Err(e) => {
-            error!("❌ Error exportando CSV desde datos: {}", e);
+            error!("Error exportando CSV desde datos: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e))
         }
     }
@@ -128,7 +128,7 @@ pub async fn export_stock_csv(
             Ok(create_csv_response(csv_data, "reporte_stock.csv"))
         },
         Err(e) => {
-            error!("❌ Error exportando stock a CSV: {}", e);
+            error!("Error exportando stock a CSV: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -164,7 +164,7 @@ pub async fn export_stock_pdf(
             Ok(Html(html_content))
         },
         Err(e) => {
-            error!("❌ Error exportando stock a PDF: {}", e);
+            error!("Error exportando stock a PDF: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -204,7 +204,7 @@ pub async fn export_sales_csv(
             Ok(create_csv_response(csv_data, "reporte_ventas.csv"))
         },
         Err(e) => {
-            error!("❌ Error exportando ventas a CSV: {}", e);
+            error!("Error exportando ventas a CSV: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -240,7 +240,7 @@ pub async fn export_sales_pdf(
             Ok(Html(html_content))
         },
         Err(e) => {
-            error!("❌ Error exportando ventas a PDF: {}", e);
+            error!("Error exportando ventas a PDF: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -280,7 +280,7 @@ pub async fn export_movements_csv(
             Ok(create_csv_response(csv_data, "reporte_movimientos.csv"))
         },
         Err(e) => {
-            error!("❌ Error exportando movimientos a CSV: {}", e);
+            error!("Error exportando movimientos a CSV: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -316,7 +316,7 @@ pub async fn export_movements_pdf(
             Ok(Html(html_content))
         },
         Err(e) => {
-            error!("❌ Error exportando movimientos a PDF: {}", e);
+            error!("Error exportando movimientos a PDF: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -356,7 +356,7 @@ pub async fn export_sales_by_product_csv(
             Ok(create_csv_response(csv_data, "ventas_por_producto.csv"))
         },
         Err(e) => {
-            error!("❌ Error exportando ventas por producto a CSV: {}", e);
+            error!("Error exportando ventas por producto a CSV: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -392,7 +392,7 @@ pub async fn export_sales_by_product_pdf(
             Ok(Html(html_content))
         },
         Err(e) => {
-            error!("❌ Error exportando ventas por producto a PDF: {}", e);
+            error!("Error exportando ventas por producto a PDF: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -432,7 +432,7 @@ pub async fn export_sales_by_employee_csv(
             Ok(create_csv_response(csv_data, "ventas_por_empleado.csv"))
         },
         Err(e) => {
-            error!("❌ Error exportando ventas por empleado a CSV: {}", e);
+            error!("Error exportando ventas por empleado a CSV: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
@@ -468,7 +468,7 @@ pub async fn export_sales_by_employee_pdf(
             Ok(Html(html_content))
         },
         Err(e) => {
-            error!("❌ Error exportando ventas por empleado a PDF: {}", e);
+            error!("Error exportando ventas por empleado a PDF: {}", e);
             Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
         }
     }
