@@ -108,3 +108,20 @@ model ActiveSession {
   @@index([usuarioId])
   @@schema("pos_service")
 }
+
+// 5. CATÁLOGO DE CLIENTES PARA REUTILIZAR DATOS EN FACTURACIONES FUTURAS
+// Se guarda/actualiza automáticamente al cobrar un pedido con factura con
+// datos (ver PosService.pagarPedido); nunca guarda al consumidor final.
+model Cliente {
+  id         String   @id @default(uuid())
+  cedula     String   @unique
+  nombre     String
+  apellido   String
+  vecesUsado Int      @default(1)
+  ultimoUso  DateTime @default(now())
+  creadoEn   DateTime @default(now())
+
+  @@index([nombre])
+  @@index([apellido])
+  @@schema("pos_service")
+}

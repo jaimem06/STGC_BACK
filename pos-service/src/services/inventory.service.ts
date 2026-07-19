@@ -18,6 +18,44 @@ const getHeaders = (token?: string) => {
   return token ? { Authorization: token } : {};
 };
 
+// El inventory-service (Render, plan gratuito) puede tardar 30-50s en
+// "despertar" tras estar inactivo. Un timeout corto lo reporta como "no
+// disponible" cuando en realidad solo está arrancando, y el descuento de
+// stock nunca llega a intentarse de verdad. Esperamos lo suficiente y
+// reintentamos los fallos de conexión antes de darnos por vencidos.
+const INVENTORY_TIMEOUT_MS = 45_000;
+const INVENTORY_MAX_INTENTOS = 3;
+const esperar = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * POST al inventory-service con reintentos ante fallos de conexión/timeout
+ * (cold start, red inestable). Las respuestas reales del servicio (400 stock
+ * insuficiente, 404 producto inexistente) NO se reintentan: ya son la
+ * respuesta definitiva y reintentar solo retrasaría el resultado correcto.
+ */
+async function postInventarioConReintentos(url: string, payload: object, token?: string) {
+  let ultimoError: any;
+  for (let intento = 1; intento <= INVENTORY_MAX_INTENTOS; intento++) {
+    try {
+      return await axios.post(url, payload, {
+        headers: getHeaders(token),
+        timeout: INVENTORY_TIMEOUT_MS,
+      });
+    } catch (error: any) {
+      ultimoError = error;
+      if (error?.response?.status !== undefined) throw error;
+      if (intento < INVENTORY_MAX_INTENTOS) {
+        console.warn(
+          `Intento ${intento}/${INVENTORY_MAX_INTENTOS} sin respuesta del inventory-service, reintentando...`,
+          error?.message
+        );
+        await esperar(2000 * intento);
+      }
+    }
+  }
+  throw ultimoError;
+}
+
 export const getInventoryCafeteria = async (token?: string) => {
   try {
     const inventoryUrl = process.env.INVENTORY_SERVICE_URL || 'http://localhost:3000';
@@ -68,7 +106,7 @@ export const descontarStockVenta = async (
 
   for (const item of items) {
     try {
-      await axios.post(
+      await postInventarioConReintentos(
         `${inventoryUrl}/inventario/pos/movimientos`,
         {
           item_id: item.productoId,
@@ -76,7 +114,7 @@ export const descontarStockVenta = async (
           tipo: 'SALIDA',
           motivo: `Venta POS - Pedido ${pedidoId}`
         },
-        { headers: getHeaders(token), timeout: 5000 }
+        token
       );
     } catch (error: any) {
       const status = error?.response?.status;

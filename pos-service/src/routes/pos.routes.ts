@@ -14,6 +14,9 @@ router.post('/caja/cierre', PosController.cerrarCaja);
 // Inventario
 router.get('/productos', PosController.getProductos);
 
+// Clientes (reutilización de datos para facturación)
+router.get('/clientes', PosController.buscarClientes);
+
 // Pedidos
 router.get('/pedidos', PosController.getPedidos); // NUEVA RUTA AGREGADA
 router.post('/pedidos', PosController.crearPedido);

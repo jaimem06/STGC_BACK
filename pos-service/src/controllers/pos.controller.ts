@@ -2,6 +2,7 @@ type Request = any;
 type Response = any;
 import { PosService } from '../services/pos.service';
 import { getInventoryCafeteria } from '../services/inventory.service';
+import { buscarClientes as buscarClientesService } from '../services/clientes.service';
 import { generateTicket80mm } from '../services/pdf.service';
 import { CreatePedidoSchema, UpdatePedidoSchema, PagoPedidoSchema, CierreCajaSchema } from '../dtos/pos.dto';
 import { AppError } from '../utils/AppError';
@@ -113,6 +114,17 @@ export class PosController {
       return res.status(201).json(turno);
     } catch (error) {
       if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
+      return res.status(500).json({ error: 'Error interno del servidor' });
+    }
+  }
+
+  // NUEVO: BUSCAR CLIENTES YA FACTURADOS PARA REUTILIZAR SUS DATOS
+  static async buscarClientes(req: Request, res: Response) {
+    try {
+      const q = (req.query.q as string) || '';
+      const clientes = await buscarClientesService(q);
+      return res.status(200).json(clientes);
+    } catch (error) {
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }

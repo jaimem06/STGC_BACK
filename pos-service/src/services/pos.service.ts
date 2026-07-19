@@ -2,6 +2,7 @@ import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
 import { auditAction } from './audit.service';
 import { descontarStockVenta, validateStock } from './inventory.service';
+import { guardarClienteParaReutilizar } from './clientes.service';
 import { Request } from 'express';
 
 export class PosService {
@@ -216,6 +217,14 @@ export class PosService {
       pedido.items.map(i => ({ productoId: i.productoId, nombre: i.nombre, cantidad: i.cantidad })),
       pedidoId,
       token
+    );
+
+    // Best-effort: guarda el cliente para que el cajero pueda reutilizarlo en
+    // la próxima venta sin volver a digitar sus datos (no aplica a consumidor final).
+    await guardarClienteParaReutilizar(
+      updatedPedido.cliente_nombre,
+      updatedPedido.cliente_apellido,
+      updatedPedido.cliente_cedula
     );
 
     await auditAction(req, 'PAGAR_PEDIDO');
