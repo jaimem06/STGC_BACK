@@ -1,7 +1,7 @@
 import prisma from '../config/database';
 import { AppError } from '../utils/AppError';
 import { auditAction } from './audit.service';
-import { updateStock, validateStock } from './inventory.service';
+import { descontarStockVenta, validateStock } from './inventory.service';
 import { Request } from 'express';
 
 export class PosService {
@@ -94,10 +94,6 @@ export class PosService {
       include: { items: true, pagos: true }
     });
 
-    for (const item of data.items) {
-      await updateStock(item.productoId, item.cantidad, 'RESERVAR', token);
-    }
-
     await auditAction(req, 'CREAR_PEDIDO');
     return pedido;
   }
@@ -123,10 +119,6 @@ export class PosService {
     const token = req.headers.authorization;
 
     if (data.items && data.items.length > 0) {
-      for (const item of pedido.items) {
-        await updateStock(item.productoId, item.cantidad, 'LIBERAR', token);
-      }
-
       let subtotal = 0;
       for (const item of data.items) {
         const ok = await validateStock(item.productoId, item.cantidad, token);
@@ -152,10 +144,6 @@ export class PosService {
           subtotal: item.subtotal
         }))
       };
-
-      for (const item of data.items) {
-        await updateStock(item.productoId, item.cantidad, 'RESERVAR', token);
-      }
     }
 
     const updatedPedido = await prisma.pedido.update({
@@ -181,11 +169,6 @@ export class PosService {
       where: { id: pedidoId },
       data: { estado: 'ANULADO' }
     });
-
-    const token = req.headers.authorization;
-    for (const item of pedido.items) {
-      await updateStock(item.productoId, item.cantidad, 'LIBERAR', token);
-    }
 
     await auditAction(req, 'ANULAR_PEDIDO');
     return updatedPedido;
@@ -229,16 +212,19 @@ export class PosService {
     });
 
     const token = req.headers.authorization;
-    for (const item of pedido.items) {
-      await updateStock(item.productoId, item.cantidad, 'DESCONTAR', token);
-    }
+    const advertencias = await descontarStockVenta(
+      pedido.items.map(i => ({ productoId: i.productoId, nombre: i.nombre, cantidad: i.cantidad })),
+      pedidoId,
+      token
+    );
 
     await auditAction(req, 'PAGAR_PEDIDO');
-    
+
     // Como la suma debe ser exacta, el vuelto siempre será 0 (según reglas actuales)
     return {
       pedido: updatedPedido,
-      vuelto: 0
+      vuelto: 0,
+      advertencias
     };
   }
 
