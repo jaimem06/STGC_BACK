@@ -38,7 +38,10 @@ export class PosService {
     const turno = await this.getTurnoActivo(usuarioId);
     if (!turno) throw new AppError('No hay un turno abierto', 400);
 
-    const whereClause: any = { turnoId: turno.id };
+    // Se busca en TODOS los turnos de este cajero, no solo el actualmente
+    // abierto: un pedido EN_EDICION que quedó sin cobrar al cerrar caja no
+    // debe volverse invisible/huérfano en la siguiente apertura de turno.
+    const whereClause: any = { turno: { usuarioId } };
     if (estados) {
       whereClause.estado = { in: estados.split(',').map(e => e.trim()) };
     }
