@@ -6,15 +6,22 @@ function esCedulaConsumidorFinal(cedula: string): boolean {
   return c === '' || /^9+$/.test(c);
 }
 
-/** Busca clientes ya facturados por cédula (prefijo) o por nombre/apellido, para autocompletar. */
+
 export async function buscarClientes(query: string) {
   const q = query.trim();
   if (q.length < 2) return [];
 
+  if (/^\d+$/.test(q)) {
+    return prisma.cliente.findMany({
+      where: { cedula: { contains: q } },
+      orderBy: { ultimoUso: 'desc' },
+      take: 8,
+    });
+  }
+
   return prisma.cliente.findMany({
     where: {
       OR: [
-        { cedula: { startsWith: q } },
         { nombre: { contains: q, mode: 'insensitive' } },
         { apellido: { contains: q, mode: 'insensitive' } },
       ],

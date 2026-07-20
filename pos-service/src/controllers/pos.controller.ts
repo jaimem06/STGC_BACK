@@ -125,6 +125,7 @@ export class PosController {
       const clientes = await buscarClientesService(q);
       return res.status(200).json(clientes);
     } catch (error) {
+      console.error('Error buscando clientes:', error);
       return res.status(500).json({ error: 'Error interno del servidor' });
     }
   }
