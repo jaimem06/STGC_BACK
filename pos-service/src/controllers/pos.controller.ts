@@ -130,6 +130,19 @@ export class PosController {
     }
   }
 
+  // Resumen en vivo del turno abierto: apertura, cobrado por método de pago y
+  // monto con el que debe cerrarse la caja.
+  static async getResumenCaja(req: Request, res: Response) {
+    try {
+      const usuarioId = req.user!.sub;
+      const resumen = await PosService.getResumenTurno(usuarioId);
+      return res.status(200).json(resumen);
+    } catch (error) {
+      if (error instanceof AppError) return res.status(error.statusCode).json({ error: error.message });
+      return res.status(500).json({ error: 'Error interno del servidor' });
+    }
+  }
+
   static async getEstadoCaja(req: Request, res: Response) {
     try {
       const usuarioId = req.user!.sub;

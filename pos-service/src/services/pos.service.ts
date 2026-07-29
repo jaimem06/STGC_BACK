@@ -5,6 +5,9 @@ import { descontarStockVenta, validateStock } from './inventory.service';
 import { guardarClienteParaReutilizar } from './clientes.service';
 import { Request } from 'express';
 
+/** Redondeo a centavos para comparaciones estables de dinero. */
+const round2 = (value: number) => Math.round(value * 100) / 100;
+
 export class PosService {
   private static IVA_RATE = parseFloat(process.env.IVA_RATE || '0.15');
 
@@ -13,6 +16,50 @@ export class PosService {
       where: { usuarioId, estado: 'ABIERTO' }
     });
     return turno;
+  }
+
+  /**
+   * Resumen en vivo del turno abierto: con cuánto se abrió, cuánto se ha
+   * cobrado (desglosado por método de pago) y con cuánto debe cerrarse.
+   * El monto esperado incluye TODOS los métodos de pago (efectivo, tarjetas,
+   * transferencias y billeteras), no solo el efectivo físico.
+   */
+  static async getResumenTurno(usuarioId: string) {
+    const turno = await this.getTurnoActivo(usuarioId);
+    if (!turno) throw new AppError('No hay un turno abierto', 400);
+    const resumen = await this.construirResumenTurno(turno);
+    return { turno, resumen };
+  }
+
+  private static async construirResumenTurno(turno: { id: string; montoApertura: number }) {
+    const pedidosPagados = await prisma.pedido.findMany({
+      where: { turnoId: turno.id, estado: 'PAGADO' },
+      include: { pagos: true }
+    });
+
+    const desglose: Record<string, number> = {};
+    let montoVentasTotal = 0;
+
+    pedidosPagados.forEach(p => {
+      montoVentasTotal += p.total;
+      p.pagos.forEach(pago => {
+        desglose[pago.metodoPago] = round2((desglose[pago.metodoPago] || 0) + pago.monto);
+      });
+    });
+
+    montoVentasTotal = round2(montoVentasTotal);
+    const montoApertura = round2(turno.montoApertura);
+
+    return {
+      totalTransacciones: pedidosPagados.length,
+      montoVentasTotal,
+      // Se conserva por compatibilidad con clientes antiguos, pero el cuadre
+      // ya NO se hace solo contra el efectivo.
+      ventas_efectivo: round2(desglose['EFECTIVO'] || 0),
+      desglose,
+      montoApertura,
+      montoCierreEsperado: round2(montoApertura + montoVentasTotal)
+    };
   }
 
   static async abrirTurno(req: Request, montoApertura: number) {
@@ -246,34 +293,39 @@ export class PosService {
     const turno = await this.getTurnoActivo(usuarioId);
     if (!turno) throw new AppError('No hay turno abierto para cerrar', 400);
 
-    const pedidosPagados = await prisma.pedido.findMany({
-      where: { turnoId: turno.id, estado: 'PAGADO' },
-    });
-
-    let montoVentasTotal = 0;
-
-    pedidosPagados.forEach(p => {
-      montoVentasTotal += p.total;
-    });
-
-    const montoCierreSistema = turno.montoApertura + montoVentasTotal;
+    const resumen = await this.construirResumenTurno(turno);
+    const montoCierreSistema = resumen.montoCierreEsperado;
     // Redondeamos a centavos para una comparación estable (evita descuadres por floats).
-    const diferencia = Math.round((montoCierreFisico - montoCierreSistema) * 100) / 100;
-    // Estados de cierre válidos del enum EstadoTurno (schema.prisma). El cast
-    // evita fallos de compilación si el cliente Prisma generado está desincronizado
-    // con el schema; el valor sí es válido para la columna en la base de datos.
-    const estadoFinal: 'CERRADO_CONCILIADO' | 'CERRADO_CON_DESCUADRE' =
-      diferencia === 0 ? 'CERRADO_CONCILIADO' : 'CERRADO_CON_DESCUADRE';
+    const diferencia = round2(montoCierreFisico - montoCierreSistema);
+
+    // El cierre solo procede si el monto declarado cuadra EXACTAMENTE con el
+    // esperado (apertura + todo lo cobrado en el turno). Antes se permitía
+    // cerrar con descuadre; ahora se rechaza para que el cajero corrija el
+    // conteo antes de cerrar el turno.
+    if (Math.abs(diferencia) >= 0.01) {
+      const sobra = diferencia > 0;
+      throw new AppError(
+        `El monto declarado ($${montoCierreFisico.toFixed(2)}) no coincide con el monto esperado en caja ` +
+        `($${montoCierreSistema.toFixed(2)} = $${resumen.montoApertura.toFixed(2)} de apertura + ` +
+        `$${resumen.montoVentasTotal.toFixed(2)} cobrados). ` +
+        `${sobra ? 'Sobran' : 'Faltan'} $${Math.abs(diferencia).toFixed(2)}. ` +
+        `Verifica el arqueo antes de cerrar la caja.`,
+        400
+      );
+    }
 
     const updatedTurno = await prisma.turno.update({
       where: { id: turno.id },
       data: {
+        // Al exigir cuadre exacto, el cierre siempre queda conciliado. El cast
+        // evita fallos de compilación si el cliente Prisma generado está
+        // desincronizado con el schema; el valor sí es válido en la columna.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        estado: estadoFinal as any,
+        estado: 'CERRADO_CONCILIADO' as any,
         fechaCierre: new Date(),
         montoCierreFisico,
         montoCierreSistema,
-        diferencia
+        diferencia: 0
       }
     });
 
@@ -282,9 +334,7 @@ export class PosService {
     // Estructura exacta que pide el frontend / HU010
     return {
       turno: updatedTurno,
-      resumen: {
-        totalTransacciones: pedidosPagados.length
-      }
+      resumen
     };
   }
 }

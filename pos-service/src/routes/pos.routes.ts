@@ -8,6 +8,7 @@ router.use(authMiddleware);
 
 // Gestión de Turno/Caja
 router.get('/caja/estado', PosController.getEstadoCaja);
+router.get('/caja/resumen', PosController.getResumenCaja);
 router.post('/caja/apertura', PosController.abrirTurno);
 router.post('/caja/cierre', PosController.cerrarCaja);
 
