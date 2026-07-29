@@ -290,6 +290,14 @@ pub struct ListarComprobantesQuery {
     /// Filtra por nombre, apellido, cédula del cliente o número de comprobante.
     #[serde(default)]
     pub q: Option<String>,
+    /// Instante inicial (inclusive, RFC 3339) del rango de fechas a listar.
+    /// El POS lo usa para mostrar únicamente las facturas del día en curso;
+    /// el corte lo calcula el cliente en su propia zona horaria.
+    #[serde(default)]
+    pub desde: Option<DateTime<Utc>>,
+    /// Instante final (exclusivo, RFC 3339) del rango de fechas a listar.
+    #[serde(default)]
+    pub hasta: Option<DateTime<Utc>>,
     #[serde(default)]
     pub limit: Option<i64>,
     #[serde(default)]
@@ -302,6 +310,8 @@ pub struct ListarComprobantesQuery {
     tag = "Emisión de comprobantes",
     params(
         ("q" = Option<String>, Query, description = "Filtra por nombre, apellido, cédula del cliente o número de comprobante"),
+        ("desde" = Option<String>, Query, description = "Instante inicial inclusive (RFC 3339) del rango de fechas"),
+        ("hasta" = Option<String>, Query, description = "Instante final exclusivo (RFC 3339) del rango de fechas"),
         ("limit" = Option<i64>, Query, description = "Máximo de resultados (por defecto 20, máx 100)"),
         ("offset" = Option<i64>, Query, description = "Desplazamiento para paginar")
     ),
@@ -325,9 +335,19 @@ pub async fn listar_mis_comprobantes(
     // usuario"), así que se filtra por el cajero_id real del pedido en el
     // POS, no por lo persistido en `datos` (que puede faltar en filas
     // antiguas pendientes de rehidratación).
+    //
+    // El rango de fechas se aplica sobre la fecha de pago y, si la factura aún
+    // no se ha cobrado (BORRADOR/PENDIENTE), sobre la fecha de creación del
+    // pedido; así el POS puede mostrar solo el trabajo del día en curso.
+    // Ambas columnas son `timestamp` sin zona (default de Prisma) con valores
+    // en UTC, de ahí el `AT TIME ZONE 'UTC'` antes de comparar instantes.
     let filter_clause = r#"p.cajero_id = $1
              AND ($2 = '' OR p.cliente_nombre ILIKE $3 OR to_jsonb(p)->>'cliente_apellido' ILIKE $3
-                  OR p.cliente_cedula ILIKE $3 OR c.numero::text ILIKE $3)"#;
+                  OR p.cliente_cedula ILIKE $3 OR c.numero::text ILIKE $3)
+             AND ($4::timestamptz IS NULL
+                  OR (COALESCE(p.fecha_pago, p."fechaCreacion") AT TIME ZONE 'UTC') >= $4::timestamptz)
+             AND ($5::timestamptz IS NULL
+                  OR (COALESCE(p.fecha_pago, p."fechaCreacion") AT TIME ZONE 'UTC') < $5::timestamptz)"#;
 
     let listado_sql = format!(
         r#"SELECT c.numero, c.pedido_id, c.estado::text, c.datos, c.motivo_estado, c.actualizado
@@ -335,7 +355,7 @@ pub async fn listar_mis_comprobantes(
            JOIN pos_service."Pedido" p ON p.id = c.pedido_id
            WHERE {filter_clause}
            ORDER BY c.numero DESC
-           LIMIT $4 OFFSET $5"#
+           LIMIT $6 OFFSET $7"#
     );
     let rows = sqlx::query_as::<
         _,
@@ -351,6 +371,8 @@ pub async fn listar_mis_comprobantes(
     .bind(&cajero_id)
     .bind(&filtro)
     .bind(&filtro_like)
+    .bind(params.desde)
+    .bind(params.hasta)
     .bind(limit)
     .bind(offset)
     .fetch_all(&pool)
@@ -371,6 +393,8 @@ pub async fn listar_mis_comprobantes(
         .bind(&cajero_id)
         .bind(&filtro)
         .bind(&filtro_like)
+        .bind(params.desde)
+        .bind(params.hasta)
         .fetch_one(&pool)
         .await
         .unwrap_or(0);
