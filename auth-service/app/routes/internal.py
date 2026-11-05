@@ -1,64 +1,105 @@
-from fastapi import APIRouter, Depends, HTTPException, Security, status, BackgroundTasks
-from fastapi.security import APIKeyHeader
-from app.config import settings
-from app.database import db
-from app.schemas.audit import AuditCreate
+"""
+Endpoints machine-to-machine para otros servicios del proyecto.
+Protegidos con la cabecera X-Internal-Api-Key; nunca deben exponerse a navegadores.
+"""
 
-router = APIRouter(prefix="/internal", tags=["Servicios Internos"])
+from typing import Annotated
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security, status
+from fastapi.security import APIKeyHeader
+from prisma import Prisma
+
+from app.config import settings
+from app.core import endpoints
+from app.database import get_db
+from app.dependencies import get_active_suspension_until
+from app.schemas.audit import AuditCreate, IntrospectRequest, IntrospectResponse
+from app.schemas.user import UserPublic
+from app.security import ACCESS_TOKEN_TYPE, constant_time_equals, decode_token
+from app.services.audit import record_audit
+from app.services.sessions import session_is_active
 
 API_KEY_NAME = "X-Internal-Api-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
-async def get_internal_api_key(
-    api_key: str = Security(api_key_header),
-):
-    if api_key == settings.internal_api_key:
+
+async def get_internal_api_key(api_key: str = Security(api_key_header)):
+    # Comparación en tiempo constante para no filtrar la clave por timing.
+    if constant_time_equals(api_key, settings.internal_api_key):
         return api_key
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail="No se pudieron validar las credenciales internas",
     )
 
-async def _record_audit_log(user_id: str, action: str, endpoint: str, ip_address: str):
-    try:
-        await db.auditlog.create(
-            data={
-                "user_id": user_id,
-                "action": action,
-                "endpoint": endpoint,
-                "ip_address": ip_address,
-            }
-        )
-    except Exception as e:
-        # Registramos en consola como respaldo
-        print(f"Error en la tarea en segundo plano para el registro de auditoría: {e}")
+
+router = APIRouter(
+    prefix=endpoints.INTERNAL_PREFIX,
+    tags=["Servicios Internos"],
+    dependencies=[Depends(get_internal_api_key)],
+)
+
+Db = Annotated[Prisma, Depends(get_db)]
+
 
 @router.post(
-    "/audit", 
+    endpoints.INTERNAL_AUDIT,
     status_code=status.HTTP_201_CREATED,
-    summary="Registrar Log de Auditoría",
-    description="""
-Permite que otros microservicios del ecosistema STGC registren eventos de auditoría de forma centralizada.
-
-### Instrucciones de uso:
-1. **Seguridad**: Se requiere el header `X-Internal-Api-Key` con la clave secreta compartida definida en las variables de entorno.
-2. **Asincronismo**: La escritura en la base de datos se realiza en segundo plano utilizando `BackgroundTasks`. El endpoint responde de inmediato con un estado de éxito, lo que evita retrasos en el microservicio solicitante.
-3. **Casos de uso**: Ideal para registrar creación de pedidos, movimientos de inventario, pesajes de café, etc., asociándolos siempre a un ID de usuario del servicio de autenticación.
-    """
+    summary="Registrar evento de auditoría",
+    description=(
+        f"Otros servicios registran eventos de forma centralizada. Requiere `{API_KEY_NAME}`. "
+        "La escritura se hace en segundo plano."
+    ),
 )
-async def create_audit_log(
-    audit_data: AuditCreate,
-    background_tasks: BackgroundTasks,
-    _ = Depends(get_internal_api_key)
-):
-    """
-    Punto de conexión para que otros microservicios registren auditorías de forma centralizada.
-    """
+async def create_audit_log(audit_data: AuditCreate, background_tasks: BackgroundTasks,
+                           request: Request, db: Db):
+    if audit_data.user_id and not await db.user.find_unique(where={"id": audit_data.user_id}):
+        raise HTTPException(status_code=400, detail="user_id no existe")
     background_tasks.add_task(
-        _record_audit_log, 
-        audit_data.user_id, 
-        audit_data.action, 
-        audit_data.endpoint, 
-        audit_data.ip_address
+        record_audit,
+        db,
+        audit_data.action,
+        user_id=audit_data.user_id,
+        endpoint=audit_data.endpoint,
+        ip_address=audit_data.ip_address,
+        # source_ip va al final para que el llamante no pueda sobrescribirlo.
+        details={**(audit_data.details or {}),
+                 "source_ip": request.client.host if request.client else None},
     )
     return {"status": "success", "message": "Registro de auditoría en cola"}
+
+
+@router.post(
+    endpoints.INTERNAL_INTROSPECT,
+    response_model=IntrospectResponse,
+    summary="Validar un access token",
+    description=(
+        "Verifica firma y expiración y además consulta la base de datos: detecta tokens de sesiones "
+        "cerradas, usuarios suspendidos o desactivados. Devuelve `active: false` ante cualquier fallo."
+    ),
+)
+async def introspect(data: IntrospectRequest, db: Db):
+    inactive = IntrospectResponse(active=False)
+    payload = decode_token(data.token, ACCESS_TOKEN_TYPE)
+    if payload is None or not payload.get("sid"):
+        return inactive
+    session = await db.usersession.find_unique(
+        where={"id": payload["sid"]}, include={"user": {"include": {"role": True}}}
+    )
+    if session is None or session.user_id != payload["sub"] or not session_is_active(session):
+        return inactive
+    user = session.user
+    if user.status != "ACTIVO" or get_active_suspension_until(user):
+        return inactive
+    return IntrospectResponse(
+        active=True, sub=user.id, email=user.email, role=user.role.name,
+        sid=session.id, status=user.status, exp=int(payload["exp"]),
+    )
+
+
+@router.get(endpoints.INTERNAL_USER, response_model=UserPublic, summary="Datos básicos de un usuario")
+async def get_user_public(user_id: str, db: Db):
+    user = await db.user.find_unique(where={"id": user_id}, include={"role": True})
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return user

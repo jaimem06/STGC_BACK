@@ -1,147 +1,176 @@
-import smtplib
+import html
 import logging
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from typing import List, Optional
 import re
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.utils import formatdate, make_msgid
+from typing import Optional
+from urllib.parse import quote
+
 from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 def clean_html(raw_html: str) -> str:
     """Extrae texto plano de HTML de forma básica."""
-    cleanr = re.compile('<.*?>', re.DOTALL)
-    cleantext = re.sub(cleanr, '', raw_html)
-    return cleantext
+    text = re.sub(r"<(style|script)[^>]*>.*?</\1>", "", raw_html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<a [^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", r"\2: \1", text, flags=re.DOTALL)
+    text = re.sub(r"<.*?>", "", text, flags=re.DOTALL)
+    return re.sub(r"\n\s*\n+", "\n\n", html.unescape(text)).strip()
 
-def send_email(
-    recipient_email: str,
-    subject: str,
-    body_html: str
-) -> bool:
+
+def send_email(recipient_email: str, subject: str, body_html: str) -> bool:
     """
-    Envía un correo electrónico utilizando la configuración SMTP.
-    Soporta TLS (587) y SSL (465).
-
-    Devuelve True si el correo se envió correctamente, False en caso contrario.
-    Nunca lanza excepciones (pensado para correr dentro de un BackgroundTask),
-    pero registra con claridad la causa exacta de cualquier fallo.
+    Envía un correo por SMTP (TLS en 587, SSL en 465).
+    Devuelve True si se envió. Nunca lanza excepciones (pensado para BackgroundTasks).
     """
     if not settings.smtp_user or not settings.smtp_password:
-        logger.error(
-            "SMTP NO CONFIGURADO: faltan SMTP_USER y/o SMTP_PASSWORD. "
-            "El correo a %s NO fue enviado. Revise las variables de entorno.",
-            recipient_email,
-        )
+        logger.error("SMTP no configurado: el correo a %s NO fue enviado.", recipient_email)
         return False
 
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    from_email = settings.smtp_from_email or settings.smtp_user
-    message["From"] = from_email
+    message["From"] = settings.smtp_from_email or settings.smtp_user
     message["To"] = recipient_email
-
-    # Versión en texto plano para mejor entregabilidad
-    text_content = clean_html(body_html)
-    message.attach(MIMEText(text_content, "plain", "utf-8"))
+    message["Date"] = formatdate(localtime=False)
+    message["Message-ID"] = make_msgid()
+    message.attach(MIMEText(clean_html(body_html), "plain", "utf-8"))
     message.attach(MIMEText(body_html, "html", "utf-8"))
 
     try:
-        # Decidir entre SMTP estándar (con STARTTLS) o SMTP_SSL
-        if settings.smtp_port == 465:
-            server_class = smtplib.SMTP_SSL
-        else:
-            server_class = smtplib.SMTP
-
+        server_class = smtplib.SMTP_SSL if settings.smtp_port == 465 else smtplib.SMTP
         with server_class(settings.smtp_host, settings.smtp_port, timeout=10) as server:
             server.ehlo()
             if settings.smtp_port != 465 and settings.smtp_tls:
                 server.starttls()
                 server.ehlo()
-
             server.login(settings.smtp_user, settings.smtp_password)
             server.send_message(message)
-            logger.info(f"Correo enviado exitosamente a {recipient_email}")
-            return True
+        logger.info("Correo '%s' enviado a %s", subject, recipient_email)
+        return True
     except smtplib.SMTPAuthenticationError as e:
         logger.error(
-            "ERROR DE AUTENTICACIÓN SMTP para usuario %r (código %s): %s. "
-            "Causa típica: App Password incorrecto, o el valor de SMTP_PASSWORD "
-            "contiene comillas/espacios sobrantes (frecuente en Render). "
+            "Error de autenticación SMTP para %r (código %s). Revisa SMTP_USER/SMTP_PASSWORD. "
             "El correo a %s NO fue enviado.",
-            settings.smtp_user, getattr(e, "smtp_code", "?"),
-            getattr(e, "smtp_error", b"").decode(errors="ignore") if isinstance(getattr(e, "smtp_error", b""), bytes) else e,
-            recipient_email,
+            settings.smtp_user, getattr(e, "smtp_code", "?"), recipient_email,
         )
-        return False
     except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, TimeoutError, OSError) as e:
         logger.error(
-            "ERROR DE CONEXIÓN SMTP a %s:%s -> %s: %s. "
-            "Verifique host/puerto y que el proveedor no bloquee el SMTP saliente. "
-            "El correo a %s NO fue enviado.",
-            settings.smtp_host, settings.smtp_port, type(e).__name__, e, recipient_email,
+            "Error de conexión SMTP a %s:%s (%s). El correo a %s NO fue enviado.",
+            settings.smtp_host, settings.smtp_port, type(e).__name__, recipient_email,
         )
-        return False
     except Exception as e:
-        logger.error(
-            "ERROR INESPERADO al enviar correo a %s: %s: %s",
-            recipient_email, type(e).__name__, e,
-        )
-        return False
+        logger.error("Error inesperado al enviar correo a %s: %s", recipient_email, type(e).__name__)
+    return False
 
-def send_password_reset_email(email: str, token: str) -> bool:
-    """
-    Envía el enlace de recuperación de contraseña al usuario con la identidad visual de la finca.
 
-    Devuelve True si el correo se envió correctamente, False en caso contrario.
-    """
-    logger.info("Iniciando envío de correo de recuperación de contraseña a %s", email)
-    reset_link = f"{settings.frontend_url}/reset-password?token={token}"
-    
-    # Colores: 
-    # Marine Green: #636b3f | Deep Green: #2b361c | Barium Yellow: #fefae3 
-    # Sepia E37: #d4a369 | Leather: #b17036
-    
-    subject = "Recuperación de Contraseña - STGC Tierra Fértil"
-    body_html = f"""
-    <html>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; background-color: #fefae3; padding: 20px; color: #2b361c;">
-            <div style="max-width: 600px; margin: auto; background-color: white; border: 2px solid #636b3f; padding: 40px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-                <div style="text-align: center; margin-bottom: 30px;">
-                    <h1 style="color: #2b361c; margin: 0; font-size: 24px; border-bottom: 2px solid #d4a369; display: inline-block; padding-bottom: 10px;">
-                        STGC Tierra Fértil
-                    </h1>
-                </div>
-                
-                <h2 style="color: #636b3f;">Restablecer Contraseña</h2>
-                <p>Hola,</p>
-                <p>Hemos recibido una solicitud para restablecer tu contraseña en el <strong>Sistema de Trazabilidad y Gestión de Café</strong>.</p>
-                <p>Para continuar con el proceso, haz clic en el botón de abajo. Ten en cuenta que este enlace caducará en <strong>10 minutos</strong>:</p>
-                
-                <div style="text-align: center; margin: 40px 0;">
-                    <a href="{reset_link}" 
-                       style="background-color: #636b3f; color: #fefae3; padding: 15px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; border: 1px solid #2b361c; display: inline-block;">
-                       CREAR NUEVA CONTRASEÑA
+def _render(title: str, paragraphs: list[str], button_text: Optional[str] = None,
+            link: Optional[str] = None, footer_note: Optional[str] = None) -> str:
+    """Plantilla HTML común. Todos los textos se escapan antes de insertarse."""
+    app_name = html.escape(settings.app_display_name)
+    body = "".join(f"<p>{html.escape(p)}</p>" for p in paragraphs)
+    button = ""
+    if button_text and link:
+        safe_link = html.escape(link, quote=True)
+        button = f"""
+                <div style="text-align: center; margin: 36px 0;">
+                    <a href="{safe_link}"
+                       style="background-color: #2563eb; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+                       {html.escape(button_text)}
                     </a>
                 </div>
-                
-                <p style="font-size: 0.9em; color: #b17036;">
-                    <strong>¿No solicitaste este cambio?</strong> Puedes ignorar este correo con total seguridad. Tu contraseña actual no cambiará.
-                </p>
-                
-                <hr style="border: 0; border-top: 1px solid #d4a369; margin: 30px 0;">
-                
-                <p style="font-size: 0.8em; color: #2b361c; text-align: center; opacity: 0.8;">
-                    Finca Tierra Fértil - Sistema de Gestión<br>
-                    Este es un correo automático, por favor no responda.
+                <p style="font-size: 0.85em; color: #52606d;">Si el botón no funciona, copia este enlace en tu navegador:<br>{safe_link}</p>"""
+    note = f'<p style="font-size: 0.9em; color: #52606d;">{html.escape(footer_note)}</p>' if footer_note else ""
+    return f"""
+    <html>
+        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; background-color: #f4f5f7; padding: 20px; color: #1f2933;">
+            <div style="max-width: 600px; margin: auto; background-color: #ffffff; border: 1px solid #d9dde3; padding: 40px; border-radius: 12px;">
+                <h1 style="margin: 0 0 24px; font-size: 22px; text-align: center;">{app_name}</h1>
+                <h2 style="color: #2563eb; font-size: 18px;">{html.escape(title)}</h2>
+                {body}
+                {button}
+                {note}
+                <hr style="border: 0; border-top: 1px solid #d9dde3; margin: 30px 0;">
+                <p style="font-size: 0.8em; color: #52606d; text-align: center;">
+                    {app_name}<br>Este es un correo automático, por favor no responda.
                 </p>
             </div>
         </body>
     </html>
     """
-    enviado = send_email(email, subject, body_html)
-    if enviado:
-        logger.info("Correo de recuperación entregado a %s", email)
-    else:
-        logger.error("NO se pudo entregar el correo de recuperación a %s", email)
-    return enviado
+
+
+def _link(path: str, token: str) -> str:
+    return f"{settings.frontend_link(path)}?token={quote(token, safe='')}"
+
+
+def send_password_reset_email(email: str, token: str) -> bool:
+    minutes = settings.password_reset_token_expire_minutes
+    body = _render(
+        "Restablecer contraseña",
+        [
+            "Hola,",
+            f"Recibimos una solicitud para restablecer tu contraseña en {settings.app_display_name}.",
+            f"El enlace caduca en {minutes} minutos y solo puede usarse una vez.",
+        ],
+        "CREAR NUEVA CONTRASEÑA",
+        _link(settings.frontend_reset_password_path, token),
+        "¿No solicitaste este cambio? Ignora este correo: tu contraseña actual no cambiará.",
+    )
+    return send_email(email, f"Recuperación de contraseña - {settings.app_display_name}", body)
+
+
+def send_invitation_email(email: str, token: str) -> bool:
+    hours = settings.invitation_token_expire_hours
+    body = _render(
+        "Te han creado una cuenta",
+        [
+            "Hola,",
+            f"Se ha creado una cuenta para ti en {settings.app_display_name}.",
+            f"Define tu contraseña con el siguiente enlace. Caduca en {hours} horas.",
+        ],
+        "DEFINIR CONTRASEÑA",
+        _link(settings.frontend_reset_password_path, token),
+    )
+    return send_email(email, f"Bienvenido a {settings.app_display_name}", body)
+
+
+def send_verification_email(email: str, token: str) -> bool:
+    hours = settings.email_verification_token_expire_hours
+    body = _render(
+        "Confirma tu correo electrónico",
+        [
+            "Hola,",
+            f"Confirma tu dirección de correo para activar tu cuenta en {settings.app_display_name}.",
+            f"El enlace caduca en {hours} horas.",
+        ],
+        "CONFIRMAR CORREO",
+        _link(settings.frontend_verify_email_path, token),
+        "Si no creaste esta cuenta, ignora este correo.",
+    )
+    return send_email(email, f"Confirma tu correo - {settings.app_display_name}", body)
+
+
+def send_password_changed_email(email: str) -> bool:
+    body = _render(
+        "Tu contraseña ha cambiado",
+        [
+            "Hola,",
+            f"La contraseña de tu cuenta en {settings.app_display_name} se cambió correctamente "
+            "y se cerraron las demás sesiones abiertas.",
+        ],
+        footer_note="Si no fuiste tú, restablece tu contraseña de inmediato y contacta al administrador.",
+    )
+    return send_email(email, f"Contraseña actualizada - {settings.app_display_name}", body)
+
+
+def send_mfa_changed_email(email: str, enabled: bool) -> bool:
+    state = "activó" if enabled else "desactivó"
+    body = _render(
+        "Verificación en dos pasos",
+        ["Hola,", f"Se {state} la verificación en dos pasos de tu cuenta en {settings.app_display_name}."],
+        footer_note="Si no fuiste tú, cambia tu contraseña de inmediato y contacta al administrador.",
+    )
+    return send_email(email, f"Seguridad de tu cuenta - {settings.app_display_name}", body)

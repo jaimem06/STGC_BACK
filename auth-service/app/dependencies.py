@@ -1,142 +1,157 @@
-from datetime import datetime, timezone
-from typing import Annotated, Callable
 import logging
-from fastapi import Depends, HTTPException, Request, status, BackgroundTasks
-from fastapi.security import OAuth2PasswordBearer
-from prisma import Prisma
-from prisma.models import User
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Annotated, Any, Optional
 
-from app.security import decode_access_token
-from app.database import get_db
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from prisma import Prisma
+from prisma.models import User, UserSession
+
 from app.config import settings
-from app.core import endpoints
+from app.database import get_db
+from app.security import ACCESS_TOKEN_TYPE, decode_token
+from app.services.sessions import as_utc, session_is_active, utcnow
 
 logger = logging.getLogger("auth-service.dependencies")
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.api_prefix}{endpoints.AUTH_PREFIX}{endpoints.AUTH_LOGIN}")
 
-def get_client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+bearer_scheme = HTTPBearer(auto_error=False, description="Access token JWT emitido por /auth/login")
 
-async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
-    db: Annotated[Prisma, Depends(get_db)],
-) -> User:
-    credentials_exception = HTTPException(
+
+# ---------------------------------------------------------------------------
+# Estado de la cuenta
+# ---------------------------------------------------------------------------
+
+def get_active_suspension_until(user: User) -> Optional[datetime]:
+    """Fecha de fin de la suspensión si el usuario está suspendido ahora mismo."""
+    if not (user.suspended_from and user.suspended_until):
+        return None
+    now = utcnow()
+    if as_utc(user.suspended_from) <= now <= as_utc(user.suspended_until):
+        return as_utc(user.suspended_until)
+    return None
+
+
+def ensure_user_can_access(user: User) -> None:
+    """Lanza 403 si el usuario está suspendido o su estado no es ACTIVO."""
+    suspended_until = get_active_suspension_until(user)
+    if suspended_until:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Cuenta suspendida hasta {suspended_until.strftime('%Y-%m-%d %H:%M:%S')} UTC",
+        )
+    if user.status != "ACTIVO":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Acceso denegado: cuenta {user.status}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Usuario autenticado
+# ---------------------------------------------------------------------------
+
+@dataclass
+class AuthContext:
+    user: User
+    session: UserSession
+    claims: dict[str, Any]
+
+
+def _unauthorized(detail: str = "No autenticado") -> HTTPException:
+    return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Credenciales invalidas. Verifica tu correo o Contraseña",
+        detail=detail,
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    payload = decode_access_token(token)
-    if payload is None:
-        logger.warning("Fallo al decodificar token JWT")
-        raise credentials_exception
 
-    user_id: str = payload.get("sub")
-    session_token: str = payload.get("session_token")
+async def get_auth_context(
+    credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)],
+    db: Annotated[Prisma, Depends(get_db)],
+) -> AuthContext:
+    """
+    Valida el access token y comprueba contra la base de datos que su sesión
+    sigue activa. Así logout, cambio de contraseña o suspensión surten efecto
+    inmediato en este servicio aunque el JWT aún no haya expirado.
+    """
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise _unauthorized()
 
-    if not user_id:
-        logger.warning("Token JWT no contiene 'sub' (user_id)")
-        raise credentials_exception
+    payload = decode_token(credentials.credentials, ACCESS_TOKEN_TYPE)
+    if payload is None or not payload.get("sid"):
+        raise _unauthorized("Token inválido o expirado")
 
-    user = await db.user.find_unique(
-        where={"id": user_id},
-        include={"role": True}
+    session = await db.usersession.find_unique(
+        where={"id": payload["sid"]},
+        include={"user": {"include": {"role": True}}},
     )
+    if session is None or session.user_id != payload["sub"] or not session_is_active(session):
+        raise _unauthorized("SESSION_INVALIDATED")
 
-    if user is None:
-        logger.warning(f"Usuario {user_id} no encontrado en la base de datos")
-        raise credentials_exception
+    ensure_user_can_access(session.user)
+    return AuthContext(user=session.user, session=session, claims=payload)
 
-    # Validación de sesión única (si el token de sesión no coincide, la sesión fue invalidada por otro login)
-    # Solo validamos si ambos existen para evitar expulsar usuarios con tokens antiguos o tras migraciones
-    if session_token and user.session_token and user.session_token != session_token:
-        logger.warning(f"Sesión invalidada para usuario {user.email}. DB: {user.session_token} vs JWT: {session_token}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="SESSION_INVALIDATED",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
-    return user
+async def get_current_user(ctx: Annotated[AuthContext, Depends(get_auth_context)]) -> User:
+    return ctx.user
 
-async def get_current_active_user(
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> User:
-    # 1. Verificar si el usuario está suspendido por fechas
-    now = datetime.now(timezone.utc)
-    
-    if current_user.suspended_from and current_user.suspended_until:
-        susp_from = current_user.suspended_from.replace(tzinfo=timezone.utc) if current_user.suspended_from.tzinfo is None else current_user.suspended_from
-        susp_until = current_user.suspended_until.replace(tzinfo=timezone.utc) if current_user.suspended_until.tzinfo is None else current_user.suspended_until
 
-        if susp_from <= now <= susp_until:
-            logger.info(f"Intento de acceso de usuario suspendido: {current_user.email}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Cuenta suspendida hasta {susp_until.strftime('%Y-%m-%d %H:%M:%S')} UTC",
-            )
+# ---------------------------------------------------------------------------
+# Roles y privilegios
+# ---------------------------------------------------------------------------
 
-    # 2. Verificar estado
-    if current_user.status != "ACTIVO":
-        logger.info(f"Intento de acceso de usuario con estado {current_user.status}: {current_user.email}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Acceso denegado: {current_user.status}",
-        )
-    
-    return current_user
+def is_admin(user: User) -> bool:
+    return user.role is not None and user.role.name == settings.admin_role_name
+
 
 class RoleChecker:
+    """
+    Exige que el usuario tenga uno de los roles indicados.
+    El rol administrador siempre tiene acceso.
+    """
+
     def __init__(self, allowed_roles: list[str]):
         self.allowed_roles = allowed_roles
 
-    def __call__(
-        self,
-        current_user: Annotated[User, Depends(get_current_active_user)],
-    ) -> User:
-        # El ADMIN siempre tiene acceso a todo
-        if current_user.role.name == "ADMIN":
+    def __call__(self, current_user: Annotated[User, Depends(get_current_user)]) -> User:
+        if is_admin(current_user) or current_user.role.name in self.allowed_roles:
             return current_user
-
-        if current_user.role.name not in self.allowed_roles:
-            logger.warning(f"Usuario {current_user.email} con rol {current_user.role.name} intentó acceder a recurso que requiere {self.allowed_roles}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"No tienes el rol necesario para esta acción. Requerido: {', '.join(self.allowed_roles)}",
-            )
-        return current_user
-
-# Dependencias de roles comunes
-require_all_access = RoleChecker(["ADMIN"])
-require_manage_users = RoleChecker(["ADMIN", "GERENTE_GENERAL", "GERENTE_OPERACIONES", "CAPATAZ"])
-
-async def _record_audit_log(db: Prisma, user_id: str, action: str, endpoint: str, ip_address: str):
-    try:
-        await db.auditlog.create(
-            data={
-                "user_id": user_id,
-                "action": action,
-                "endpoint": endpoint,
-                "ip_address": ip_address,
-            }
+        logger.warning(
+            f"Usuario {current_user.id} con rol {current_user.role.name} intentó acceder "
+            f"a un recurso que requiere {self.allowed_roles}"
         )
-    except Exception as e:
-        logger.error(f"Error al registrar auditoría: {e}")
-
-def log_user_action(action: str) -> Callable:
-    async def _log_action_dependency(
-        request: Request,
-        background_tasks: BackgroundTasks,
-        current_user: Annotated[User, Depends(get_current_user)],
-        db: Annotated[Prisma, Depends(get_db)],
-    ):
-        ip_address = get_client_ip(request)
-        background_tasks.add_task(
-            _record_audit_log, db, current_user.id, action, str(request.url.path), ip_address
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes permisos para esta acción",
         )
-        return None
-    return _log_action_dependency
+
+
+require_admin = RoleChecker([settings.admin_role_name])
+require_manage_users = RoleChecker(settings.user_manager_role_list)
+
+
+def ensure_can_manage_target(actor: User, target: User) -> None:
+    """
+    Reglas anti-escalada de privilegios:
+    - Un gestor que no es admin no puede modificar a usuarios con roles privilegiados
+      (admin u otros gestores), solo a usuarios de nivel inferior.
+    """
+    if is_admin(actor):
+        return
+    if target.role.name in settings.privileged_role_names:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo un administrador puede modificar a usuarios con roles privilegiados",
+        )
+
+
+def ensure_can_assign_role(actor: User, role_name: str) -> None:
+    """Solo el administrador puede otorgar roles privilegiados."""
+    if is_admin(actor):
+        return
+    if role_name in settings.privileged_role_names:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Solo un administrador puede asignar el rol '{role_name}'",
+        )

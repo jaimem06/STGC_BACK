@@ -1,12 +1,11 @@
-#### Script para construir el servicio en Render (Production) ####
-
 #!/usr/bin/env bash
-# Salir si ocurre un error
+# Script de construcción para despliegue (p. ej. Render).
+# Comando de arranque recomendado:
+#   uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-server-header
 set -o errexit
 
-# Le dice a Prisma que guarde los motores en la carpeta actual del proyecto
+# Guardar los motores de Prisma dentro del proyecto
 export PRISMA_BINARY_CACHE_DIR="$(pwd)/.prisma-binaries"
 
-# Instalar dependencias y compilar Prisma
 pip install -r requirements.txt
 prisma generate
