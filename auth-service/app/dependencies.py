@@ -5,17 +5,19 @@ from typing import Annotated, Any, Optional
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from prisma import Prisma
-from prisma.models import User, UserSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
+from app.models import User, UserSession, UserStatus
 from app.security import ACCESS_TOKEN_TYPE, decode_token
-from app.services.sessions import as_utc, session_is_active, utcnow
+from app.services.sessions import as_utc, get_session, session_is_active, utcnow
 
 logger = logging.getLogger("auth-service.dependencies")
 
 bearer_scheme = HTTPBearer(auto_error=False, description="Access token JWT emitido por /auth/login")
+
+Db = Annotated[AsyncSession, Depends(get_db)]
 
 
 # ---------------------------------------------------------------------------
@@ -40,10 +42,10 @@ def ensure_user_can_access(user: User) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Cuenta suspendida hasta {suspended_until.strftime('%Y-%m-%d %H:%M:%S')} UTC",
         )
-    if user.status != "ACTIVO":
+    if user.status != UserStatus.ACTIVO:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Acceso denegado: cuenta {user.status}",
+            detail=f"Acceso denegado: cuenta {user.status.value}",
         )
 
 
@@ -68,7 +70,7 @@ def _unauthorized(detail: str = "No autenticado") -> HTTPException:
 
 async def get_auth_context(
     credentials: Annotated[Optional[HTTPAuthorizationCredentials], Depends(bearer_scheme)],
-    db: Annotated[Prisma, Depends(get_db)],
+    db: Db,
 ) -> AuthContext:
     """
     Valida el access token y comprueba contra la base de datos que su sesión
@@ -82,10 +84,7 @@ async def get_auth_context(
     if payload is None or not payload.get("sid"):
         raise _unauthorized("Token inválido o expirado")
 
-    session = await db.usersession.find_unique(
-        where={"id": payload["sid"]},
-        include={"user": {"include": {"role": True}}},
-    )
+    session = await get_session(db, payload["sid"])
     if session is None or session.user_id != payload["sub"] or not session_is_active(session):
         raise _unauthorized("SESSION_INVALIDATED")
 
@@ -133,9 +132,8 @@ require_manage_users = RoleChecker(settings.user_manager_role_list)
 
 def ensure_can_manage_target(actor: User, target: User) -> None:
     """
-    Reglas anti-escalada de privilegios:
-    - Un gestor que no es admin no puede modificar a usuarios con roles privilegiados
-      (admin u otros gestores), solo a usuarios de nivel inferior.
+    Reglas anti-escalada de privilegios: un gestor que no es admin no puede modificar
+    a usuarios con roles privilegiados (admin u otros gestores).
     """
     if is_admin(actor):
         return

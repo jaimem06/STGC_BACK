@@ -1,13 +1,13 @@
 from typing import Annotated, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from prisma import Prisma
+from sqlalchemy import select
 
 from app.config import settings
 from app.core import endpoints
-from app.database import get_db
-from app.dependencies import AuthContext, get_auth_context
+from app.dependencies import AuthContext, Db, get_auth_context
 from app.limiter import limiter
+from app.models import UserSession
 from app.schemas.auth import (
     ChangePasswordRequest,
     MessageResponse,
@@ -28,14 +28,25 @@ from app.security import (
     verify_totp,
 )
 from app.services.audit import record_audit
-from app.services.sessions import revoke_session, revoke_user_sessions, session_is_active, utcnow
-from app.services.users import claim_totp_step, ensure_password_policy, ensure_unique_fields
+from app.services.sessions import (
+    get_session,
+    revoke_session,
+    revoke_user_sessions,
+    session_is_active,
+    utcnow,
+)
+from app.services.users import (
+    claim_totp_step,
+    ensure_password_policy,
+    ensure_unique_fields,
+    get_user,
+    update_user_fields,
+)
 from app.utils import email as mailer
 
 router = APIRouter(prefix=endpoints.AUTH_PREFIX, tags=["Mi cuenta"])
 
 Ctx = Annotated[AuthContext, Depends(get_auth_context)]
-Db = Annotated[Prisma, Depends(get_db)]
 
 
 @router.get(endpoints.ACCOUNT_ME, response_model=UserOut, summary="Obtener mi perfil")
@@ -55,10 +66,10 @@ async def update_me(request: Request, data: ProfileUpdate, ctx: Ctx, db: Db):
         raise HTTPException(status_code=400, detail="No se proporcionaron datos para actualizar")
     if update.get("phone_number"):
         await ensure_unique_fields(db, phone_number=update["phone_number"], exclude_user_id=ctx.user.id)
-    user = await db.user.update(where={"id": ctx.user.id}, data=update, include={"role": True})
+    await update_user_fields(db, ctx.user.id, **update)
     await record_audit(db, "profile_updated", user_id=ctx.user.id, request=request,
                        details={"fields": sorted(update)})
-    return user
+    return await get_user(db, ctx.user.id)
 
 
 @router.post(
@@ -79,9 +90,8 @@ async def change_password(
         raise HTTPException(status_code=400, detail="La nueva contraseña debe ser distinta de la actual")
     ensure_password_policy(data.new_password, user.email)
 
-    await db.user.update(
-        where={"id": user.id},
-        data={"password_hash": get_password_hash(data.new_password), "password_changed_at": utcnow()},
+    await update_user_fields(
+        db, user.id, password_hash=get_password_hash(data.new_password), password_changed_at=utcnow()
     )
     await revoke_user_sessions(db, user.id, except_session_id=ctx.session.id)
     await record_audit(db, "password_changed", user_id=user.id, request=request)
@@ -95,9 +105,14 @@ async def change_password(
 
 @router.get(endpoints.ACCOUNT_SESSIONS, response_model=List[SessionOut], summary="Listar mis sesiones activas")
 async def list_sessions(ctx: Ctx, db: Db):
-    sessions = await db.usersession.find_many(
-        where={"user_id": ctx.user.id, "revoked_at": None, "expires_at": {"gt": utcnow()}},
-        order={"last_used_at": "desc"},
+    sessions = await db.scalars(
+        select(UserSession)
+        .where(
+            UserSession.user_id == ctx.user.id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > utcnow(),
+        )
+        .order_by(UserSession.last_used_at.desc())
     )
     return [
         SessionOut(
@@ -114,7 +129,7 @@ async def list_sessions(ctx: Ctx, db: Db):
     summary="Cerrar una de mis sesiones",
 )
 async def revoke_my_session(session_id: str, request: Request, ctx: Ctx, db: Db):
-    session = await db.usersession.find_unique(where={"id": session_id})
+    session = await get_session(db, session_id)
     if session is None or session.user_id != ctx.user.id or not session_is_active(session):
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
     await revoke_session(db, session_id)
@@ -144,10 +159,7 @@ async def mfa_setup(request: Request, data: PasswordConfirm, ctx: Ctx, db: Db):
         raise HTTPException(status_code=400, detail="Contraseña incorrecta")
 
     secret = generate_totp_secret()
-    await db.user.update(
-        where={"id": user.id},
-        data={"mfa_secret": encrypt_secret(secret), "mfa_last_used_step": None},
-    )
+    await update_user_fields(db, user.id, mfa_secret=encrypt_secret(secret), mfa_last_used_step=None)
     return MfaSetupResponse(
         secret=secret,
         otpauth_uri=totp_provisioning_uri(secret, user.email, settings.app_display_name),
@@ -169,7 +181,7 @@ async def mfa_enable(
     if step is None:
         raise HTTPException(status_code=400, detail="Código de verificación inválido")
 
-    await db.user.update(where={"id": user.id}, data={"mfa_enabled": True, "mfa_last_used_step": step})
+    await update_user_fields(db, user.id, mfa_enabled=True, mfa_last_used_step=step)
     await revoke_user_sessions(db, user.id, except_session_id=ctx.session.id)
     await record_audit(db, "mfa_enabled", user_id=user.id, request=request)
     background_tasks.add_task(mailer.send_mfa_changed_email, user.email, True)
@@ -196,10 +208,7 @@ async def mfa_disable(
     if step is None or not await claim_totp_step(db, user.id, step):
         raise HTTPException(status_code=400, detail="Código de verificación inválido")
 
-    await db.user.update(
-        where={"id": user.id},
-        data={"mfa_enabled": False, "mfa_secret": None, "mfa_last_used_step": None},
-    )
+    await update_user_fields(db, user.id, mfa_enabled=False, mfa_secret=None, mfa_last_used_step=None)
     await record_audit(db, "mfa_disabled", user_id=user.id, request=request)
     background_tasks.add_task(mailer.send_mfa_changed_email, user.email, False)
     return MessageResponse(message="Verificación en dos pasos desactivada")

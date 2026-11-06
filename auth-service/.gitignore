@@ -9,9 +9,8 @@ env/
 
 # Variables de entorno (contienen secretos)
 .env
-
-# Motores de Prisma descargados en el build
-.prisma-binaries/
+.env.*
+!.env.example
 
 # Editores
 .idea/

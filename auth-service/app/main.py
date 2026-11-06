@@ -11,10 +11,11 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
+from sqlalchemy import text
 
 from app.config import is_weak_secret, security_problems, security_warnings, settings
 from app.core import endpoints
-from app.database import db
+from app.database import engine
 from app.limiter import limiter
 from app.middleware import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from app.routes import account, audit, auth, internal, roles, users
@@ -50,14 +51,19 @@ def check_configuration() -> None:
         logger.warning("Seguridad (bloquearía el arranque en producción): %s", problem)
 
 
+async def _ping_database() -> None:
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     check_configuration()
     retries = 3
     for attempt in range(1, retries + 1):
         try:
-            # Timeout amplio para bases de datos serverless con arranque en frío
-            await db.connect(timeout=30)
+            # Bases serverless (Neon) pueden tardar en despertar: se reintenta.
+            await asyncio.wait_for(_ping_database(), timeout=30)
             logger.info("Base de datos conectada")
             break
         except Exception as e:
@@ -65,11 +71,10 @@ async def lifespan(_: FastAPI):
                 logger.warning(f"Intento {attempt} de conexión a la base de datos falló. Reintentando en 2s...")
                 await asyncio.sleep(2)
             else:
-                logger.error(f"No se pudo conectar a la base de datos tras {retries} intentos: {e}")
+                logger.error(f"No se pudo conectar a la base de datos tras {retries} intentos: {type(e).__name__}")
                 raise
     yield
-    if db.is_connected():
-        await db.disconnect()
+    await engine.dispose()
 
 
 app = FastAPI(
@@ -143,7 +148,7 @@ async def health_check():
 @limiter.exempt
 async def readiness():
     try:
-        await db.query_raw("SELECT 1")
+        await asyncio.wait_for(_ping_database(), timeout=5)
     except Exception:
         return JSONResponse(status_code=503, content={"status": "unavailable", "database": "down"})
     return {"status": "ready", "database": "up"}

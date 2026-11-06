@@ -3,20 +3,20 @@ from datetime import timedelta
 from typing import Annotated, Union
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from prisma import Prisma
-from prisma.models import User
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core import endpoints
-from app.database import get_db
 from app.dependencies import (
     AuthContext,
+    Db,
     ensure_can_assign_role,
     ensure_user_can_access,
     get_auth_context,
     require_manage_users,
 )
 from app.limiter import limiter
+from app.models import User, UserStatus
 from app.schemas.auth import (
     EmailVerifyRequest,
     LoginRequest,
@@ -43,15 +43,25 @@ from app.security import (
 )
 from app.services import tokens as one_time
 from app.services.audit import record_audit
-from app.services.sessions import issue_session, revoke_session, revoke_user_sessions, rotate_refresh_token, utcnow
+from app.services.sessions import (
+    issue_session,
+    revoke_session,
+    revoke_user_sessions,
+    rotate_refresh_token,
+    utcnow,
+)
 from app.services.users import (
     claim_totp_step,
     clear_failed_attempts,
     ensure_not_locked,
     ensure_password_policy,
     ensure_unique_fields,
+    get_role_by_name,
     get_role_or_400,
+    get_user,
+    get_user_by_email,
     register_failed_attempt,
+    update_user_fields,
 )
 from app.utils import email as mailer
 
@@ -62,7 +72,7 @@ INVALID_CREDENTIALS = "Credenciales incorrectas"
 GENERIC_EMAIL_MESSAGE = "Si el email está registrado, recibirás un correo con las instrucciones"
 
 
-async def _complete_login(db: Prisma, user: User, request: Request) -> dict:
+async def _complete_login(db: AsyncSession, user: User, request: Request) -> dict:
     await clear_failed_attempts(db, user, mark_login=True)
     tokens = await issue_session(db, user, request)
     await record_audit(db, "login_success", user_id=user.id, request=request)
@@ -87,9 +97,9 @@ async def _complete_login(db: Prisma, user: User, request: Request) -> dict:
                423: {"description": "Cuenta bloqueada temporalmente"}},
 )
 @limiter.limit("10/minute")
-async def login(request: Request, data: LoginRequest, db: Annotated[Prisma, Depends(get_db)]):
+async def login(request: Request, data: LoginRequest, db: Db):
     email = data.email.lower()
-    user = await db.user.find_unique(where={"email": email}, include={"role": True})
+    user = await get_user_by_email(db, email)
 
     if user is None:
         burn_password_check(data.password)  # mismo tiempo de respuesta que con un usuario real
@@ -122,12 +132,12 @@ async def login(request: Request, data: LoginRequest, db: Annotated[Prisma, Depe
     description="Recibe el `mfa_token` del login y el código de 6 dígitos de la app autenticadora.",
 )
 @limiter.limit("10/minute")
-async def mfa_verify(request: Request, data: MfaVerifyRequest, db: Annotated[Prisma, Depends(get_db)]):
+async def mfa_verify(request: Request, data: MfaVerifyRequest, db: Db):
     payload = decode_token(data.mfa_token, MFA_TOKEN_TYPE)
     if payload is None:
         raise HTTPException(status_code=401, detail="mfa_token inválido o expirado")
 
-    user = await db.user.find_unique(where={"id": payload["sub"]}, include={"role": True})
+    user = await get_user(db, payload["sub"])
     if user is None or not user.mfa_enabled or not user.mfa_secret:
         raise HTTPException(status_code=401, detail="mfa_token inválido o expirado")
 
@@ -153,16 +163,12 @@ async def mfa_verify(request: Request, data: MfaVerifyRequest, db: Annotated[Pri
     ),
 )
 @limiter.limit("30/minute")
-async def refresh(request: Request, data: RefreshRequest, db: Annotated[Prisma, Depends(get_db)]):
+async def refresh(request: Request, data: RefreshRequest, db: Db):
     return await rotate_refresh_token(db, data.refresh_token, request)
 
 
 @router.post(endpoints.AUTH_LOGOUT, status_code=status.HTTP_204_NO_CONTENT, summary="Cerrar sesión actual")
-async def logout(
-    request: Request,
-    ctx: Annotated[AuthContext, Depends(get_auth_context)],
-    db: Annotated[Prisma, Depends(get_db)],
-):
+async def logout(request: Request, ctx: Annotated[AuthContext, Depends(get_auth_context)], db: Db):
     await revoke_session(db, ctx.session.id)
     await record_audit(db, "logout", user_id=ctx.user.id, request=request)
 
@@ -173,11 +179,7 @@ async def logout(
     summary="Cerrar todas las sesiones",
     description="Revoca todas las sesiones del usuario en todos los dispositivos, incluida la actual.",
 )
-async def logout_all(
-    request: Request,
-    ctx: Annotated[AuthContext, Depends(get_auth_context)],
-    db: Annotated[Prisma, Depends(get_db)],
-):
+async def logout_all(request: Request, ctx: Annotated[AuthContext, Depends(get_auth_context)], db: Db):
     await revoke_user_sessions(db, ctx.user.id)
     await record_audit(db, "logout_all", user_id=ctx.user.id, request=request)
 
@@ -201,7 +203,7 @@ async def register(
     request: Request,
     user_in: UserCreate,
     background_tasks: BackgroundTasks,
-    db: Annotated[Prisma, Depends(get_db)],
+    db: Db,
     actor: Annotated[User, Depends(require_manage_users)],
 ):
     email = user_in.email.lower()
@@ -218,22 +220,21 @@ async def register(
     else:
         password_hash = unusable_password_hash()
 
-    user = await db.user.create(
-        data={
-            "email": email,
-            "first_name": user_in.first_name,
-            "last_name": user_in.last_name,
-            "identifier": user_in.identifier,
-            "phone_number": user_in.phone_number,
-            "password_hash": password_hash,
-            "role_id": role.id,
-            "status": user_in.status.value,
-            # Con contraseña definida por el gestor el email se da por verificado;
-            # por invitación se verifica cuando el usuario usa el enlace.
-            "email_verified": bool(user_in.password),
-        },
-        include={"role": True},
+    user = User(
+        email=email,
+        first_name=user_in.first_name,
+        last_name=user_in.last_name,
+        identifier=user_in.identifier,
+        phone_number=user_in.phone_number,
+        password_hash=password_hash,
+        role_id=role.id,
+        status=user_in.status,
+        # Con contraseña definida por el gestor el email se da por verificado;
+        # por invitación se verifica cuando el usuario usa el enlace.
+        email_verified=bool(user_in.password),
     )
+    db.add(user)
+    await db.commit()
 
     if not user_in.password:
         token = await one_time.create_one_time_token(
@@ -246,7 +247,7 @@ async def register(
         db, "user_created", user_id=actor.id, request=request,
         details={"target_user_id": user.id, "role": role_name, "invited": not user_in.password},
     )
-    return user
+    return await get_user(db, user.id)
 
 
 @router.post(
@@ -261,12 +262,7 @@ async def register(
     ),
 )
 @limiter.limit("5/minute")
-async def signup(
-    request: Request,
-    data: UserSignup,
-    background_tasks: BackgroundTasks,
-    db: Annotated[Prisma, Depends(get_db)],
-):
+async def signup(request: Request, data: UserSignup, background_tasks: BackgroundTasks, db: Db):
     if not settings.allow_public_registration:
         raise HTTPException(status_code=403, detail="El registro público está deshabilitado")
 
@@ -274,29 +270,31 @@ async def signup(
     ensure_password_policy(data.password, email)
     verification = settings.require_email_verification
 
-    if await db.user.find_unique(where={"email": email}):
+    if await get_user_by_email(db, email):
         burn_password_check(data.password)  # mismo coste que crear la cuenta (sin pista por tiempos)
         if verification:
             await record_audit(db, "signup_existing_email", request=request, details={"email": email})
             return SignupResponse(message="Revisa tu correo para confirmar la cuenta", verification_required=True)
         raise HTTPException(status_code=409, detail="El email ya está registrado")
 
-    role = await db.role.find_unique(where={"name": settings.default_role_name})
+    role = await get_role_by_name(db, settings.default_role_name)
     if role is None:
         logger.error("DEFAULT_ROLE_NAME '%s' no existe; ejecuta seed.py", settings.default_role_name)
         raise HTTPException(status_code=500, detail="Registro no disponible")
 
-    user = await db.user.create(
-        data={
-            "email": email,
-            "first_name": data.first_name,
-            "last_name": data.last_name,
-            "password_hash": get_password_hash(data.password),
-            "role_id": role.id,
-            # Nadie ha demostrado aún que controla este correo.
-            "email_verified": False,
-        }
+    user = User(
+        email=email,
+        first_name=data.first_name,
+        last_name=data.last_name,
+        password_hash=get_password_hash(data.password),
+        role_id=role.id,
+        status=UserStatus.ACTIVO,
+        # Nadie ha demostrado aún que controla este correo.
+        email_verified=False,
     )
+    db.add(user)
+    await db.commit()
+
     if verification:
         token = await one_time.create_one_time_token(
             db, user.id, one_time.EMAIL_VERIFICATION,
@@ -325,7 +323,7 @@ async def signup(
     ),
 )
 @limiter.limit("10/minute")
-async def verify_email(request: Request, data: EmailVerifyRequest, db: Annotated[Prisma, Depends(get_db)]):
+async def verify_email(request: Request, data: EmailVerifyRequest, db: Db):
     token = await one_time.find_valid_token(db, data.token, one_time.EMAIL_VERIFICATION)
     if token is None:
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
@@ -338,7 +336,7 @@ async def verify_email(request: Request, data: EmailVerifyRequest, db: Annotated
     user_id = await one_time.consume_one_time_token(db, data.token, one_time.EMAIL_VERIFICATION)
     if not user_id:
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
-    await db.user.update(where={"id": user_id}, data={"email_verified": True})
+    await update_user_fields(db, user_id, email_verified=True)
     await record_audit(db, "email_verified", user_id=user_id, request=request)
     return MessageResponse(message="Correo confirmado correctamente")
 
@@ -350,13 +348,10 @@ async def verify_email(request: Request, data: EmailVerifyRequest, db: Annotated
 )
 @limiter.limit("3/minute")
 async def resend_verification(
-    request: Request,
-    data: PasswordResetRequest,
-    background_tasks: BackgroundTasks,
-    db: Annotated[Prisma, Depends(get_db)],
+    request: Request, data: PasswordResetRequest, background_tasks: BackgroundTasks, db: Db
 ):
     email = data.email.lower()
-    user = await db.user.find_unique(where={"email": email})
+    user = await get_user_by_email(db, email)
     if user and not user.email_verified and not await one_time.recently_issued(
         db, user.id, one_time.EMAIL_VERIFICATION, settings.email_resend_cooldown_seconds
     ):
@@ -380,13 +375,10 @@ async def resend_verification(
 )
 @limiter.limit("3/minute")
 async def recover_password(
-    request: Request,
-    data: PasswordResetRequest,
-    background_tasks: BackgroundTasks,
-    db: Annotated[Prisma, Depends(get_db)],
+    request: Request, data: PasswordResetRequest, background_tasks: BackgroundTasks, db: Db
 ):
     email = data.email.lower()
-    user = await db.user.find_unique(where={"email": email})
+    user = await get_user_by_email(db, email)
     if user is None:
         logger.info("Recuperación solicitada para email inexistente")
     elif await one_time.recently_issued(
@@ -414,32 +406,28 @@ async def recover_password(
 )
 @limiter.limit("10/minute")
 async def reset_password(
-    request: Request,
-    data: PasswordResetConfirm,
-    background_tasks: BackgroundTasks,
-    db: Annotated[Prisma, Depends(get_db)],
+    request: Request, data: PasswordResetConfirm, background_tasks: BackgroundTasks, db: Db
 ):
     token = await one_time.find_valid_token(db, data.token, one_time.PASSWORD_RESET)
     if token is None:
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
 
+    email = token.user.email
     # La política se valida antes de consumir el token para no gastarlo en vano.
-    ensure_password_policy(data.new_password, token.user.email)
+    ensure_password_policy(data.new_password, email)
     user_id = await one_time.consume_one_time_token(db, data.token, one_time.PASSWORD_RESET)
     if not user_id:
         raise HTTPException(status_code=400, detail="Token inválido o expirado")
 
-    await db.user.update(
-        where={"id": user_id},
-        data={
-            "password_hash": get_password_hash(data.new_password),
-            "password_changed_at": utcnow(),
-            "failed_login_attempts": 0,
-            "locked_until": None,
-            "email_verified": True,
-        },
+    await update_user_fields(
+        db, user_id,
+        password_hash=get_password_hash(data.new_password),
+        password_changed_at=utcnow(),
+        failed_login_attempts=0,
+        locked_until=None,
+        email_verified=True,
     )
     await revoke_user_sessions(db, user_id)
     await record_audit(db, "password_reset", user_id=user_id, request=request)
-    background_tasks.add_task(mailer.send_password_changed_email, token.user.email)
+    background_tasks.add_task(mailer.send_password_changed_email, email)
     return MessageResponse(message="Contraseña actualizada exitosamente")

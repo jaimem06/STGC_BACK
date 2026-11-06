@@ -143,7 +143,7 @@ X-Internal-Api-Key: ...
 
 ## 4. Migrar desde la versión anterior
 
-- Aplica `migrations/20261105_security_upgrade.sql`. Toca solo las tablas de autenticación.
+- Ejecuta `alembic stamp 0001` y luego `alembic upgrade head`. Si ya habías aplicado a mano el SQL de seguridad, basta con `alembic stamp 0002`. Solo se tocan las tablas de autenticación.
 - Todos los usuarios deberán iniciar sesión de nuevo, porque desaparece `session_token`.
 - El login ahora también devuelve `refresh_token`. Los frontends antiguos siguen funcionando, pero su sesión durará `ACCESS_TOKEN_EXPIRE_MINUTES` hasta que implementen `/refresh`.
 - `GET /users/` devuelve como máximo `limit` usuarios (50 por defecto, hasta 200). Usa `skip` y `X-Total-Count` para paginar.

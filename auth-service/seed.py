@@ -16,12 +16,15 @@ Uso:  python seed.py
 
 import asyncio
 import sys
-from datetime import datetime, timezone
 
-from prisma import Prisma
+from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert
 
 from app.config import settings
+from app.database import SessionLocal, engine
+from app.models import Role, User, UserSession
 from app.security import get_password_hash, password_policy_errors
+from app.services.sessions import utcnow
 
 
 def _base_roles() -> list[dict]:
@@ -49,56 +52,58 @@ async def main() -> int:
         print("SEED_ADMIN_PASSWORD no cumple la política: " + "; ".join(errors))
         return 1
 
-    db = Prisma(datasource={"url": settings.database_url})
-    try:
-        await db.connect(timeout=60)
-    except Exception as e:
-        print(f"Error al conectar a la base de datos: {e}")
-        return 1
-
-    try:
+    async with SessionLocal() as db:
         print("Sincronizando roles...")
         for rd in _base_roles():
-            await db.role.upsert(
-                where={"name": rd["name"]},
-                data={
-                    "create": {"name": rd["name"], "description": rd["description"]},
-                    "update": {"description": rd["description"]},
-                },
-            )
+            stmt = insert(Role).values(name=rd["name"], description=rd["description"])
+            await db.execute(stmt.on_conflict_do_update(
+                index_elements=[Role.name], set_={"description": stmt.excluded.description}
+            ))
             print(f"  - {rd['name']}")
+        await db.commit()
 
-        admin_role = await db.role.find_unique(where={"name": settings.admin_role_name})
-        existing = await db.user.find_unique(where={"email": email})
+        admin_role = await db.scalar(select(Role).where(Role.name == settings.admin_role_name))
+        existing = await db.scalar(select(User).where(User.email == email))
         if existing is None:
-            await db.user.create(
-                data={
-                    "email": email,
-                    "password_hash": get_password_hash(password),
-                    "role_id": admin_role.id,
-                    "email_verified": True,
-                }
-            )
+            db.add(User(
+                email=email,
+                password_hash=get_password_hash(password),
+                role_id=admin_role.id,
+                email_verified=True,
+            ))
+            await db.commit()
             print(f"Administrador {email} creado.")
         elif settings.seed_reset_admin_password:
-            await db.user.update(
-                where={"id": existing.id},
-                data={"password_hash": get_password_hash(password), "role_id": admin_role.id,
-                      "failed_login_attempts": 0, "locked_until": None},
+            await db.execute(
+                update(User).where(User.id == existing.id).values(
+                    password_hash=get_password_hash(password), role_id=admin_role.id,
+                    failed_login_attempts=0, locked_until=None,
+                ).execution_options(synchronize_session=False)
             )
-            await db.usersession.update_many(
-                where={"user_id": existing.id, "revoked_at": None},
-                data={"revoked_at": datetime.now(timezone.utc)},
+            await db.execute(
+                update(UserSession)
+                .where(UserSession.user_id == existing.id, UserSession.revoked_at.is_(None))
+                .values(revoked_at=utcnow())
+                .execution_options(synchronize_session=False)
             )
+            await db.commit()
             print(f"Contraseña de {email} restablecida y sesiones cerradas.")
         else:
             print(f"El administrador {email} ya existe; su contraseña no se modificó.")
-    finally:
-        await db.disconnect()
 
     print("Seed completado exitosamente.")
     return 0
 
 
+async def run() -> int:
+    try:
+        return await main()
+    except Exception as e:
+        print(f"Error durante el seed: {type(e).__name__}: {e}")
+        return 1
+    finally:
+        await engine.dispose()
+
+
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main()))
+    sys.exit(asyncio.run(run()))

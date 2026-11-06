@@ -3,21 +3,19 @@ Endpoints machine-to-machine para otros servicios del proyecto.
 Protegidos con la cabecera X-Internal-Api-Key; nunca deben exponerse a navegadores.
 """
 
-from typing import Annotated
-
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader
-from prisma import Prisma
 
 from app.config import settings
 from app.core import endpoints
-from app.database import get_db
-from app.dependencies import get_active_suspension_until
+from app.dependencies import Db, get_active_suspension_until
+from app.models import UserStatus
 from app.schemas.audit import AuditCreate, IntrospectRequest, IntrospectResponse
 from app.schemas.user import UserPublic
 from app.security import ACCESS_TOKEN_TYPE, constant_time_equals, decode_token
-from app.services.audit import record_audit
-from app.services.sessions import session_is_active
+from app.services.audit import record_audit_background
+from app.services.sessions import get_session, session_is_active
+from app.services.users import get_user
 
 API_KEY_NAME = "X-Internal-Api-Key"
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
@@ -39,8 +37,6 @@ router = APIRouter(
     dependencies=[Depends(get_internal_api_key)],
 )
 
-Db = Annotated[Prisma, Depends(get_db)]
-
 
 @router.post(
     endpoints.INTERNAL_AUDIT,
@@ -53,11 +49,10 @@ Db = Annotated[Prisma, Depends(get_db)]
 )
 async def create_audit_log(audit_data: AuditCreate, background_tasks: BackgroundTasks,
                            request: Request, db: Db):
-    if audit_data.user_id and not await db.user.find_unique(where={"id": audit_data.user_id}):
+    if audit_data.user_id and not await get_user(db, audit_data.user_id):
         raise HTTPException(status_code=400, detail="user_id no existe")
     background_tasks.add_task(
-        record_audit,
-        db,
+        record_audit_background,
         audit_data.action,
         user_id=audit_data.user_id,
         endpoint=audit_data.endpoint,
@@ -83,23 +78,21 @@ async def introspect(data: IntrospectRequest, db: Db):
     payload = decode_token(data.token, ACCESS_TOKEN_TYPE)
     if payload is None or not payload.get("sid"):
         return inactive
-    session = await db.usersession.find_unique(
-        where={"id": payload["sid"]}, include={"user": {"include": {"role": True}}}
-    )
+    session = await get_session(db, payload["sid"])
     if session is None or session.user_id != payload["sub"] or not session_is_active(session):
         return inactive
     user = session.user
-    if user.status != "ACTIVO" or get_active_suspension_until(user):
+    if user.status != UserStatus.ACTIVO or get_active_suspension_until(user):
         return inactive
     return IntrospectResponse(
         active=True, sub=user.id, email=user.email, role=user.role.name,
-        sid=session.id, status=user.status, exp=int(payload["exp"]),
+        sid=session.id, status=user.status.value, exp=int(payload["exp"]),
     )
 
 
 @router.get(endpoints.INTERNAL_USER, response_model=UserPublic, summary="Datos básicos de un usuario")
 async def get_user_public(user_id: str, db: Db):
-    user = await db.user.find_unique(where={"id": user_id}, include={"role": True})
+    user = await get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return user

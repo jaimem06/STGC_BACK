@@ -1,9 +1,9 @@
 from datetime import datetime
-from enum import Enum
 from typing import Annotated, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, StringConstraints, model_validator
 
+from app.models import UserStatus
 from app.schemas.role import RoleOut, RoleName
 
 # Límites de tamaño en todas las entradas para evitar abusos y datos basura.
@@ -15,13 +15,6 @@ Phone = Annotated[
 ]
 # La política completa se valida en el servidor (app.security.password_policy_errors).
 Password = Annotated[str, StringConstraints(min_length=1, max_length=128)]
-
-
-class UserStatus(str, Enum):
-    ACTIVO = "ACTIVO"
-    INACTIVO = "INACTIVO"
-    SUSPENDIDO = "SUSPENDIDO"
-    PENDIENTE = "PENDIENTE"
 
 
 class UserCreate(BaseModel):

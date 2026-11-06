@@ -2,11 +2,11 @@ from datetime import datetime
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Response
-from prisma import Prisma
+from sqlalchemy import func, select
 
 from app.core import endpoints
-from app.database import get_db
-from app.dependencies import require_admin
+from app.dependencies import Db, require_admin
+from app.models import AuditLog
 from app.schemas.audit import AuditOut
 
 router = APIRouter(
@@ -24,7 +24,7 @@ router = APIRouter(
 )
 async def list_audit_logs(
     response: Response,
-    db: Annotated[Prisma, Depends(get_db)],
+    db: Db,
     user_id: Annotated[Optional[str], Query(max_length=64)] = None,
     action: Annotated[Optional[str], Query(max_length=100)] = None,
     date_from: Optional[datetime] = None,
@@ -32,17 +32,21 @@ async def list_audit_logs(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
-    where: dict = {}
+    conditions = []
     if user_id:
-        where["user_id"] = user_id
+        conditions.append(AuditLog.user_id == user_id)
     if action:
-        where["action"] = action
-    if date_from or date_to:
-        where["created_at"] = {}
-        if date_from:
-            where["created_at"]["gte"] = date_from
-        if date_to:
-            where["created_at"]["lte"] = date_to
+        conditions.append(AuditLog.action == action)
+    if date_from:
+        conditions.append(AuditLog.created_at >= date_from)
+    if date_to:
+        conditions.append(AuditLog.created_at <= date_to)
 
-    response.headers["X-Total-Count"] = str(await db.auditlog.count(where=where))
-    return await db.auditlog.find_many(where=where, order={"created_at": "desc"}, skip=skip, take=limit)
+    total = await db.scalar(select(func.count()).select_from(AuditLog).where(*conditions))
+    response.headers["X-Total-Count"] = str(total)
+    logs = await db.scalars(
+        select(AuditLog).where(*conditions)
+        .order_by(AuditLog.created_at.desc(), AuditLog.id)
+        .offset(skip).limit(limit)
+    )
+    return list(logs)

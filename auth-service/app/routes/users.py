@@ -2,20 +2,21 @@ import logging
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from prisma import Prisma
-from prisma.models import User
+from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.core import endpoints
-from app.database import get_db
 from app.dependencies import (
+    Db,
     ensure_can_assign_role,
     ensure_can_manage_target,
     get_active_suspension_until,
     require_admin,
     require_manage_users,
 )
-from app.schemas.user import UserOut, UserStatus, UserSuspend, UserUpdate
+from app.models import AuthToken, Role, User, UserStatus
+from app.schemas.user import UserOut, UserSuspend, UserUpdate
 from app.security import get_password_hash
 from app.services.audit import record_audit
 from app.services.sessions import revoke_user_sessions, utcnow
@@ -24,17 +25,18 @@ from app.services.users import (
     ensure_password_policy,
     ensure_unique_fields,
     get_role_or_400,
+    get_user,
+    update_user_fields,
 )
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix=endpoints.USERS_PREFIX, tags=["Gestión de Usuarios"])
 
-Db = Annotated[Prisma, Depends(get_db)]
 Manager = Annotated[User, Depends(require_manage_users)]
 
 
-async def _get_user_or_404(db: Prisma, user_id: str) -> User:
-    user = await db.user.find_unique(where={"id": user_id}, include={"role": True})
+async def _get_user_or_404(db: AsyncSession, user_id: str) -> User:
+    user = await get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
     return user
@@ -61,26 +63,27 @@ async def list_users(
     status_filter: Annotated[Optional[UserStatus], Query(alias="status")] = None,
     role: Annotated[Optional[str], Query(max_length=50)] = None,
 ):
-    where: dict = {}
+    conditions = []
     if search:
-        term = {"contains": search, "mode": "insensitive"}
-        where["OR"] = [
-            {"email": term}, {"first_name": term}, {"last_name": term}, {"identifier": term},
-        ]
+        conditions.append(or_(
+            *(column.icontains(search, autoescape=True)
+              for column in (User.email, User.first_name, User.last_name, User.identifier))
+        ))
     if status_filter:
-        where["status"] = status_filter.value
+        conditions.append(User.status == status_filter)
     if role:
-        where["role"] = {"is": {"name": role}}
+        conditions.append(User.role_id.in_(select(Role.id).where(Role.name == role)))
 
-    total = await db.user.count(where=where)
+    total = await db.scalar(select(func.count()).select_from(User).where(*conditions))
     response.headers["X-Total-Count"] = str(total)
-    return await db.user.find_many(
-        where=where, include={"role": True}, order={"email": "asc"}, skip=skip, take=limit
+    users = await db.scalars(
+        select(User).where(*conditions).order_by(User.email).offset(skip).limit(limit)
     )
+    return list(users)
 
 
 @router.get(endpoints.USERS_DETAIL, response_model=UserOut, summary="Obtener usuario")
-async def get_user(user_id: str, db: Db, _: Manager):
+async def get_user_detail(user_id: str, db: Db, _: Manager):
     return await _get_user_or_404(db, user_id)
 
 
@@ -90,8 +93,8 @@ async def get_user(user_id: str, db: Db, _: Manager):
     summary="Actualizar usuario",
     description=(
         "Modifica datos, rol, estado o contraseña. Un gestor no administrador no puede tocar "
-        "usuarios con roles privilegiados ni otorgar esos roles. Cambiar contraseña o desactivar "
-        "la cuenta cierra todas sus sesiones."
+        "usuarios con roles privilegiados ni otorgar esos roles. Cambiar rol, contraseña o "
+        "desactivar la cuenta cierra todas sus sesiones."
     ),
 )
 async def update_user(user_id: str, data: UserUpdate, request: Request, db: Db, actor: Manager):
@@ -104,7 +107,7 @@ async def update_user(user_id: str, data: UserUpdate, request: Request, db: Db, 
     if actor.id == target.id and ({"role_name", "status", "email_verified"} & payload.keys()):
         raise HTTPException(status_code=400, detail="No puedes cambiar tu propio rol, estado o verificación")
 
-    update: dict = {}
+    values: dict = {}
     revoke_sessions = False
 
     if data.role_name and data.role_name != target.role.name:
@@ -112,57 +115,61 @@ async def update_user(user_id: str, data: UserUpdate, request: Request, db: Db, 
         role = await get_role_or_400(db, data.role_name)
         if data.role_name != settings.admin_role_name:
             await ensure_not_last_admin(db, target)
-        update["role_id"] = role.id
+        values["role_id"] = role.id
         # Los JWT emitidos llevan el rol antiguo: se cierran para que otros servicios no lo sigan aceptando.
         revoke_sessions = True
 
-    if data.status and data.status.value != target.status:
+    if data.status and data.status != target.status:
         if data.status != UserStatus.ACTIVO:
             await ensure_not_last_admin(db, target)
             revoke_sessions = True
-        update["status"] = data.status.value
+        values["status"] = data.status
 
     if data.email:
         email = data.email.lower()
         if email != target.email:
             await ensure_unique_fields(db, email=email, exclude_user_id=user_id)
-            update["email"] = email
-            update["email_verified"] = False
+            values["email"] = email
+            values["email_verified"] = False
 
     if data.identifier:
         await ensure_unique_fields(db, identifier=data.identifier, exclude_user_id=user_id)
-        update["identifier"] = data.identifier
+        values["identifier"] = data.identifier
     if data.phone_number:
         await ensure_unique_fields(db, phone_number=data.phone_number, exclude_user_id=user_id)
-        update["phone_number"] = data.phone_number
+        values["phone_number"] = data.phone_number
     for field in ("first_name", "last_name"):
         if field in payload:
-            update[field] = payload[field]
+            values[field] = payload[field]
     if data.email_verified is not None:
-        update["email_verified"] = data.email_verified
+        values["email_verified"] = data.email_verified
 
     if data.password:
-        ensure_password_policy(data.password, update.get("email", target.email))
-        update["password_hash"] = get_password_hash(data.password)
-        update["password_changed_at"] = utcnow()
+        ensure_password_policy(data.password, values.get("email", target.email))
+        values["password_hash"] = get_password_hash(data.password)
+        values["password_changed_at"] = utcnow()
         revoke_sessions = True
 
-    if not update:
+    if not values:
         return target
 
-    user = await db.user.update(where={"id": user_id}, data=update, include={"role": True})
-    if "email" in update:
+    await update_user_fields(db, user_id, **values)
+    if "email" in values:
         # Los enlaces enviados al email anterior no deben servir para la nueva dirección.
-        await db.authtoken.update_many(
-            where={"user_id": user_id, "used_at": None}, data={"used_at": utcnow()}
+        await db.execute(
+            update(AuthToken)
+            .where(AuthToken.user_id == user_id, AuthToken.used_at.is_(None))
+            .values(used_at=utcnow())
+            .execution_options(synchronize_session=False)
         )
+        await db.commit()
     if revoke_sessions:
         await revoke_user_sessions(db, user_id)
 
-    changed = sorted(k for k in update if k != "password_hash")
+    changed = sorted(k for k in values if k != "password_hash")
     await record_audit(db, "user_updated", user_id=actor.id, request=request,
                        details={"target_user_id": user_id, "fields": changed})
-    return user
+    return await get_user(db, user_id)
 
 
 @router.patch(
@@ -181,11 +188,10 @@ async def suspend_user(user_id: str, data: UserSuspend, request: Request, db: Db
         _forbid_self(actor, target, "suspender")
         await ensure_not_last_admin(db, target)
 
-    user = await db.user.update(
-        where={"id": user_id},
-        data={"suspended_from": data.suspended_from, "suspended_until": data.suspended_until},
-        include={"role": True},
+    await update_user_fields(
+        db, user_id, suspended_from=data.suspended_from, suspended_until=data.suspended_until
     )
+    user = await get_user(db, user_id)
     if get_active_suspension_until(user):
         await revoke_user_sessions(db, user_id)
     action = "user_suspended" if data.suspended_from else "user_unsuspended"
@@ -201,13 +207,10 @@ async def suspend_user(user_id: str, data: UserSuspend, request: Request, db: Db
 async def unlock_user(user_id: str, request: Request, db: Db, actor: Manager):
     target = await _get_user_or_404(db, user_id)
     ensure_can_manage_target(actor, target)
-    user = await db.user.update(
-        where={"id": user_id}, data={"failed_login_attempts": 0, "locked_until": None},
-        include={"role": True},
-    )
+    await update_user_fields(db, user_id, failed_login_attempts=0, locked_until=None)
     await record_audit(db, "user_unlocked", user_id=actor.id, request=request,
                        details={"target_user_id": user_id})
-    return user
+    return await get_user(db, user_id)
 
 
 @router.post(endpoints.USERS_REVOKE_SESSIONS, status_code=status.HTTP_204_NO_CONTENT,
@@ -225,15 +228,11 @@ async def revoke_sessions(user_id: str, request: Request, db: Db, actor: Manager
 async def reset_user_mfa(user_id: str, request: Request, db: Db, actor: Manager):
     target = await _get_user_or_404(db, user_id)
     ensure_can_manage_target(actor, target)
-    user = await db.user.update(
-        where={"id": user_id},
-        data={"mfa_enabled": False, "mfa_secret": None, "mfa_last_used_step": None},
-        include={"role": True},
-    )
+    await update_user_fields(db, user_id, mfa_enabled=False, mfa_secret=None, mfa_last_used_step=None)
     await revoke_user_sessions(db, user_id)
     await record_audit(db, "user_mfa_reset", user_id=actor.id, request=request,
                        details={"target_user_id": user_id})
-    return user
+    return await get_user(db, user_id)
 
 
 @router.delete(endpoints.USERS_DETAIL, status_code=status.HTTP_204_NO_CONTENT,
@@ -245,6 +244,10 @@ async def delete_user(
     target = await _get_user_or_404(db, user_id)
     _forbid_self(actor, target, "eliminar")
     await ensure_not_last_admin(db, target)
-    await db.user.delete(where={"id": user_id})
+    email = target.email
+    # Las sesiones y tokens se borran en cascada; la auditoría queda con user_id en NULL.
+    await db.execute(delete(User).where(User.id == user_id).execution_options(synchronize_session=False))
+    await db.commit()
+    db.expunge_all()
     await record_audit(db, "user_deleted", user_id=actor.id, request=request,
-                       details={"target_user_id": user_id, "email": target.email})
+                       details={"target_user_id": user_id, "email": email})

@@ -5,7 +5,8 @@ Microservicio reutilizable de **autenticación, sesiones, roles (RBAC) y auditor
 ## Stack
 
 - **Framework:** FastAPI + Starlette
-- **ORM:** Prisma Client Python sobre PostgreSQL
+- **Base de datos:** PostgreSQL con SQLAlchemy 2 asíncrono (asyncpg)
+- **Migraciones:** Alembic
 - **Tokens:** PyJWT (HS256 o RS256 con JWKS)
 - **Contraseñas:** bcrypt (12 rondas)
 - **Rate limiting:** slowapi (memoria o Redis)
@@ -105,17 +106,43 @@ Los listados devuelven el total en la cabecera `X-Total-Count`.
    pip install -r requirements.txt
    ```
 2. Copiar `.env.example` a `.env`. Completar al menos `DATABASE_URL`, `SECRET_KEY`, `INTERNAL_API_KEY`, `DATA_ENCRYPTION_KEY` y `SEED_ADMIN_PASSWORD`.
-3. Crear las tablas:
-   - **Base nueva y dedicada:** `prisma generate && prisma db push`.
-   - **Base existente o compartida con otras tablas:** `prisma generate` y luego aplicar los SQL de `migrations/`. Nunca uses `db push` en una base compartida: borra las tablas que no están en `schema.prisma`.
+3. Crear las tablas: `alembic upgrade head`.
 4. Roles base y administrador: `python seed.py`.
 5. Ejecutar: `uvicorn app.main:app --reload`. La documentación queda en `http://localhost:8000/docs`.
 
-### Producción
+## Migraciones con Alembic
+
+Alembic solo gestiona las tablas de este servicio y guarda su versión en `auth_alembic_version`. Puede convivir en una base compartida con otras tablas sin tocarlas.
+
+| Situación de la base | Comando |
+| :--- | :--- |
+| Nueva y vacía | `alembic upgrade head` |
+| Creada con la versión original (con `users.session_token`) | `alembic stamp 0001` y luego `alembic upgrade head` |
+| Ya actualizada con el SQL de seguridad de la versión 3.0 | `alembic stamp 0002` |
+
+Para cambiar el esquema más adelante:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-server-header
+# 1. Edita app/models.py
+alembic revision --autogenerate -m "descripcion del cambio"
+# 2. Revisa el archivo generado en migrations/versions/
+alembic upgrade head
 ```
+
+Otros comandos útiles:
+- `alembic current` muestra la versión aplicada.
+- `alembic check` confirma que la base coincide con los modelos.
+- `alembic upgrade head --sql` genera el SQL sin ejecutarlo.
+
+### Producción
+
+En Render:
+- **Build command:** `./build.sh`
+- **Pre-deploy command:** `alembic upgrade head`
+- **Start command:**
+  ```bash
+  uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-server-header
+  ```
 
 - `ENVIRONMENT` vale `production` por defecto: activa HSTS y bloquea el arranque con claves débiles.
 - Detrás de Render, Nginx o similar define `TRUSTED_PROXY_COUNT=1`. Sin ello todos los clientes comparten la IP del proxy, y un atacante agotaría el rate limit de login para todos.
@@ -135,10 +162,12 @@ auth-service/
 │   ├── config.py           # Settings y validación de seguridad
 │   ├── dependencies.py     # Usuario actual, RBAC y reglas anti-escalada
 │   ├── security.py         # Contraseñas, JWT, TOTP y cifrado
-│   ├── middleware.py       # Cabeceras de seguridad
+│   ├── middleware.py       # Cabeceras de seguridad y límite de tamaño
+│   ├── models.py           # Modelos SQLAlchemy (tablas)
+│   ├── database.py         # Motor y sesiones de base de datos
 │   └── main.py             # Aplicación FastAPI
-├── migrations/             # SQL para bases existentes
+├── migrations/             # Alembic: env.py y versions/
+├── alembic.ini
 ├── docs/integration_guide.md
-├── schema.prisma
 └── seed.py
 ```
