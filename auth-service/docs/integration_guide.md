@@ -57,6 +57,29 @@ Si el usuario tiene verificación en dos pasos, la respuesta es `{ "mfa_required
 
 ---
 
+### Frontend con servidor propio (BFF)
+
+Si el navegador habla con tu servidor y este llama al auth-service (Astro, Next.js, Nuxt...), todas las peticiones salen con la IP del servidor. El rate limit por IP (login 10/min, refresh 30/min) se repartiría entre todos los usuarios, y las sesiones y la auditoría mostrarían la IP y el navegador del servidor.
+
+Para evitarlo, el servidor reenvía los datos del usuario final en cada llamada:
+
+```http
+X-Internal-Api-Key: <INTERNAL_API_KEY>
+X-Client-IP: 203.0.113.7
+X-Client-User-Agent: Mozilla/5.0 ...
+```
+
+- Solo se aceptan con una `X-Internal-Api-Key` válida; sin ella se ignoran.
+- `X-Client-IP` debe ser una IP válida. Si no lo es, se usa la de la conexión.
+- La clave solo se envía desde el servidor, nunca desde el navegador.
+
+Otras recomendaciones para un BFF:
+- Guarda el access y el refresh token en la sesión del servidor, no en el navegador.
+- Renueva con `/auth/refresh` antes de que caduque el access token. Si varias peticiones del mismo usuario coinciden, haz una sola renovación y comparte el resultado: reenviar un refresh token ya usado revoca la sesión.
+- En el logout llama a `/auth/logout` con el access token, para revocar también el refresh token.
+
+---
+
 ## 2. Otros servicios del proyecto
 
 Hay dos formas de validar un token. Elige según lo crítica que sea la operación.

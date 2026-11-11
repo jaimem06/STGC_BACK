@@ -33,6 +33,7 @@ Microservicio reutilizable de **autenticación, sesiones, roles (RBAC) y auditor
 
 **Integración**
 - Introspección de tokens y consulta de usuarios para otros servicios.
+- Backends intermedios (BFF) que reenvían la IP y el navegador reales del usuario, para que el rate limit, las sesiones y la auditoría no los confundan con el servidor.
 - Auditoría centralizada.
 - JWKS público con RS256.
 
@@ -48,7 +49,7 @@ Microservicio reutilizable de **autenticación, sesiones, roles (RBAC) y auditor
 | Escalada de privilegios | Solo el admin otorga roles privilegiados o modifica cuentas privilegiadas; nadie cambia su propio rol o estado; nunca se elimina el último admin. |
 | Volcado de base de datos | Refresh y tokens de correo guardados como SHA-256; secretos MFA cifrados con Fernet. |
 | Contraseñas débiles | Longitud mínima, letra y número, lista de contraseñas comunes, no contener el email, máximo 72 bytes. |
-| IP falsificada | `X-Forwarded-For` solo se usa con `TRUSTED_PROXY_COUNT` y se toma desde la derecha. |
+| IP falsificada | `X-Forwarded-For` solo se usa con `TRUSTED_PROXY_COUNT` y se toma desde la derecha. `X-Client-IP` solo se acepta junto a una `X-Internal-Api-Key` válida. |
 | Clave interna por timing | Comparación en tiempo constante. |
 | Configuración insegura | Salvo con `ENVIRONMENT=development`, `dev` o `local`, el servicio no arranca con claves débiles o de ejemplo. En desarrollo usa claves aleatorias temporales. |
 | Peticiones gigantes | Límite de tamaño del cuerpo, también para envíos *chunked*. |
@@ -175,7 +176,7 @@ En la columna "Por defecto":
 
 | Variable | Por defecto | Descripción |
 | :--- | :--- | :--- |
-| `INTERNAL_API_KEY` | **producción** | Clave de la cabecera `X-Internal-Api-Key` para `/internal/*`. Debe ser distinta de `SECRET_KEY` y nunca debe llegar a un navegador. |
+| `INTERNAL_API_KEY` | **producción** | Clave de la cabecera `X-Internal-Api-Key` para `/internal/*` y para que un backend de confianza reenvíe la IP del usuario (`X-Client-IP`). Debe ser distinta de `SECRET_KEY` y nunca debe llegar a un navegador. |
 | `DATA_ENCRYPTION_KEY` | derivada de `SECRET_KEY` | Clave Fernet que cifra los secretos MFA. Se recomienda definirla para poder rotar `SECRET_KEY` sin que los usuarios pierdan el MFA. Se genera con `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. |
 
 ### Roles
